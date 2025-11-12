@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 from rag import RAGApp, CONFIG
 
-LOG_FILE = "../../results/ragUnsecurePrompt.csv"
+LOG_FILE = "ragSecurePrompt.csv"
 SYSTEM_PROMPT_FILE = "secure_prompt.txt"
 
 
