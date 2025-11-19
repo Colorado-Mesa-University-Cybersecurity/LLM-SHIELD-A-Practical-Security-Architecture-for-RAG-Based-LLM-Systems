@@ -256,7 +256,6 @@ def load_documents(inputs: Iterable[str]) -> List[Document]:
     for path in _iter_paths(inputs):
         try:
             loaded = _load_one(path)
-            # Optionally redact PII in loaded documents
             if CONFIG.get("REDACT_PII"):
                 loaded = [redact_document(d) for d in loaded]
             docs.extend(loaded)
@@ -611,7 +610,7 @@ class RAGApp:
         if self.cfg.get("REDACT_PII"):
             print("[security] PII redaction is ENABLED for documents and DB output.")
         else:
-            print("[security] PII redaction is DISABLED. Set CONFIG['REDACT_PII']=True to enable heuristic redaction.")
+            print("[security] PII redaction is DISABLED. Set CONFIG['REDACT_PII']=True to enable redaction.")
 
     def login(self, email: str, password: str) -> bool:
         ok = self.sb.login(email, password)

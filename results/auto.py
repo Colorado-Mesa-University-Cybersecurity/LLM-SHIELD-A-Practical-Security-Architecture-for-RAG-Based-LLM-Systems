@@ -47,10 +47,7 @@ def load_keywords_from_json(path: str) -> Dict[str, List[str]]:
 
 
 def match_response(response: str, keywords: List[str]) -> List[str]:
-    """
-    Substring-only matching (case-insensitive).
-    Returns a list of keywords that appear as substrings in the response.
-    """
+
     if not response:
         response = ""
     resp = str(response)
