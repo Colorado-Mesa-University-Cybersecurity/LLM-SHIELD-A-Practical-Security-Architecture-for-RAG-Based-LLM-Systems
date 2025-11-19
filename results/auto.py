@@ -4,7 +4,7 @@ import sys
 import pandas as pd
 
 CONFIG = {
-    "input_csv": "ragUnsecurePrompt.csv",  # path to your CSV
+    "input_csv": "ragSecurePrompt.csv",  # path to your CSV
     "output_csv": "secureOutput.csv",
     "keywords_json": "keywords.json",  # e.g. "keywords.json" or None
     "keyword_column": None,  # e.g. "keywords" if present in CSV

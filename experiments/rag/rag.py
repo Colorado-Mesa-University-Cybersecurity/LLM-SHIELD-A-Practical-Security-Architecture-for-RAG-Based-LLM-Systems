@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import math
+import re
 import requests
 import pandas as pd
 from dotenv import load_dotenv
@@ -54,6 +55,10 @@ CONFIG: Dict[str, Any] = {
     # CSV handling
     "CSV_ROWS_PER_DOC": 1,
     "CSV_READ_CHUNKSIZE": 10000,
+
+    # PII redaction (optional)
+    # Set to True to apply PII redaction to documents and DB output.
+    "REDACT_PII": False,
 }
 
 MODELS = [
@@ -64,10 +69,87 @@ MODELS = [
     },
     {
         "repo_id": "bartowski/Meta-Llama-3.1-8B-Instruct-GGUF",
-        "filename": "Meta-Llama-3.1-8B-Instruct-Q6_k.GGUF",
+        "filename": "Meta-Llama-3.1-8B-Instruct-Q6_K_L.gguf",
         "name": "Meta-Llama-3.1-8B-Instruct",
     },
 ]
+
+# Basic PII redaction patterns
+_CC_RE = re.compile(r'(?<!\d)(\d{13,19})(?!\d)')
+_SSN_RE = re.compile(r'\b\d{3}-\d{2}-\d{4}\b')
+_EMAIL_RE = re.compile(r'([a-zA-Z0-9_.+-]+)@([a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)')
+
+
+def mask_digits_keep_last(s: str, keep: int = 4) -> str:
+    if not s:
+        return s
+    digits = re.sub(r'\D', '', s)
+    if not digits:
+        return s  # nothing to mask
+    if len(digits) <= keep:
+        return '*' * len(digits)
+    return '*' * (len(digits) - keep) + digits[-keep:]
+
+
+def redact_text(text: str, max_len: int = 20000) -> str:
+    if not text:
+        return text
+    t = text
+
+    # Mask long digit sequences (credit cards)
+    def _mask_cc(m):
+        return mask_digits_keep_last(m.group(0), keep=4)
+
+    t = _CC_RE.sub(_mask_cc, t)
+
+    # Mask SSNs
+    t = _SSN_RE.sub('***-**-****', t)
+
+    # Mask emails: keep domain, partially mask user
+    def _mask_email(m):
+        user, domain = m.group(1), m.group(2)
+        if len(user) <= 1:
+            masked_user = '*'
+        else:
+            masked_user = user[0] + '*' * (len(user) - 1)
+        return masked_user + '@' + domain
+
+    t = _EMAIL_RE.sub(_mask_email, t)
+
+    # Truncate overly long text
+    if len(t) > max_len:
+        t = t[: max_len - 3] + "..."
+    return t
+
+
+def sanitize_metadata_key(k: str, max_len: int = 64) -> str:
+    if not k:
+        return "meta"
+    nk = re.sub(r'[^0-9a-zA-Z_]', '_', k)
+    return nk[:max_len]
+
+
+def sanitize_metadata(metadata: Dict[str, Any], value_max_len: int = 1000) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    for k, v in metadata.items():
+        sk = sanitize_metadata_key(str(k))
+        if isinstance(v, str):
+            sv = redact_text(v, max_len=value_max_len)
+        else:
+            try:
+                sv = str(v)
+            except Exception:
+                sv = "<non-serializable>"
+        if len(sv) > value_max_len:
+            sv = sv[: value_max_len - 3] + "..."
+        out[sk] = sv
+    return out
+
+
+def redact_document(doc: Document, max_content_len: int = 20000, max_meta_len: int = 1000) -> Document:
+    content = redact_text(doc.page_content or "", max_len=max_content_len)
+    metadata = sanitize_metadata(doc.metadata or {}, value_max_len=max_meta_len)
+    return Document(page_content=content, metadata=metadata)
 
 
 # Document loading
@@ -173,7 +255,11 @@ def load_documents(inputs: Iterable[str]) -> List[Document]:
     docs: List[Document] = []
     for path in _iter_paths(inputs):
         try:
-            docs.extend(_load_one(path))
+            loaded = _load_one(path)
+            # Optionally redact PII in loaded documents
+            if CONFIG.get("REDACT_PII"):
+                loaded = [redact_document(d) for d in loaded]
+            docs.extend(loaded)
         except Exception as e:
             print(f"[loader] Skipping {path}: {e}")
     return docs
@@ -455,6 +541,8 @@ def format_transactions_for_context(rows: List[Dict[str, Any]], max_len: int = 2
         "credit_card_amount",
     ]
 
+    redact_enabled = CONFIG.get("REDACT_PII", False)
+
     lines: List[str] = ["User renter_transactions rows:"]
     for idx, r in enumerate(rows, start=1):
         lines.append(f"- Row {idx}:")
@@ -462,12 +550,17 @@ def format_transactions_for_context(rows: List[Dict[str, Any]], max_len: int = 2
         for key in preferred_keys:
             val = r.get(key)
             if val is not None and val != "":
-                # mask sensitive numeric-like keys in display? Keep raw here; use prompt redact guard
-                lines.append(f"  - {key}: {val}")
+                sval = str(val)
+                if redact_enabled:
+                    sval = redact_text(sval)
+                lines.append(f"  - {key}: {sval}")
                 printed.add(key)
         for key, val in r.items():
             if key not in printed and val is not None and val != "":
-                lines.append(f"  - {key}: {val}")
+                sval = str(val)
+                if redact_enabled:
+                    sval = redact_text(sval)
+                lines.append(f"  - {key}: {sval}")
 
     text = "\n".join(lines)
     if len(text) > max_len:
@@ -514,6 +607,11 @@ class RAGApp:
         else:
             print(
                 "[db] Supabase not configured. Set SUPABASE_URL and SUPABASE_KEY in CONFIG or env to enable DB queries.")
+
+        if self.cfg.get("REDACT_PII"):
+            print("[security] PII redaction is ENABLED for documents and DB output.")
+        else:
+            print("[security] PII redaction is DISABLED. Set CONFIG['REDACT_PII']=True to enable heuristic redaction.")
 
     def login(self, email: str, password: str) -> bool:
         ok = self.sb.login(email, password)
