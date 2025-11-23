@@ -4,8 +4,8 @@ import time
 from pathlib import Path
 from rag import RAGApp, CONFIG
 
-LOG_FILE = "ragSecurePrompt.csv"
-SYSTEM_PROMPT_FILE = "secure_prompt.txt"
+LOG_FILE = "../../results/ragSecurePrompt.csv"
+SYSTEM_PROMPT_FILE = "docs/secure_prompt.txt"
 
 
 def ensure_log_header(path: str):
@@ -39,7 +39,6 @@ def main():
     CONFIG["SYSTEM_PROMPT"] = read_system_prompt(SYSTEM_PROMPT_FILE)
     CONFIG["REDACT_PII"] = True
     CONFIG["LLM_NAME"] = "Meta-Llama-3.1-8B-Instruct"
-    CONFIG["REBUILD_INDEX"] = True
 
     app = RAGApp(CONFIG)
     app.setup()

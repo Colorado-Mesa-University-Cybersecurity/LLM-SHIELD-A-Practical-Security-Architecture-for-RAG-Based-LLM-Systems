@@ -17,7 +17,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import Runnable
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -120,6 +120,10 @@ def redact_text(text: str, max_len: int = 20000) -> str:
     if len(t) > max_len:
         t = t[: max_len - 3] + "..."
     return t
+
+
+def redact_output(text: str, max_len: int = 20000) -> str:
+    return redact_text(text, max_len=max_len)
 
 
 def sanitize_metadata_key(k: str, max_len: int = 64) -> str:
@@ -256,8 +260,6 @@ def load_documents(inputs: Iterable[str]) -> List[Document]:
     for path in _iter_paths(inputs):
         try:
             loaded = _load_one(path)
-            if CONFIG.get("REDACT_PII"):
-                loaded = [redact_document(d) for d in loaded]
             docs.extend(loaded)
         except Exception as e:
             print(f"[loader] Skipping {path}: {e}")
@@ -392,7 +394,6 @@ def build_rag_chain(
                   "and proactively anticipate helpful follow-up information. Always prioritize being truthful, nuanced, insightful, and "
                   "efficient, tailoring your responses specifically to the user's needs and preferences."
             ),
-            MessagesPlaceholder("chat_history"),
             (
                 "human",
                 "Question: {input}\n\n"
@@ -413,7 +414,6 @@ def build_rag_chain(
                 "context": itemgetter("input") | retriever | _format_docs,
                 "db_context": itemgetter("db_context"),
                 "input": itemgetter("input"),
-                "chat_history": itemgetter("chat_history"),
             }
             | prompt
             | llm
@@ -429,8 +429,7 @@ def should_fetch_db(question: str) -> bool:
         "my payments", "my charges", "last transactions", "recent transactions",
         "account holder", "bank", "account type", "account mask", "routing",
         "card", "card brand", "card last4", "credit score", "annual income",
-        "check", "check number", "check date", "check payee", "check amount",
-        "check memo", "credit card amount",
+        "check", "check number", "check date", "check payee", "check amount", "check memo", "credit card amount",
     ]
     return any(k in q for k in keywords)
 
@@ -577,7 +576,6 @@ class RAGApp:
         self.llm: Optional[BaseChatModel] = None
         self.chain: Optional[Runnable] = None
         self.sb = SupabaseSession.from_config(cfg)
-        self.chat_history: List[Tuple[str, str]] = []  # list of ("human"|"ai", text)
 
     def setup(self) -> None:
         vs_dir = Path(self.cfg["VS_DIR"]).resolve()
@@ -628,13 +626,25 @@ class RAGApp:
         if self.chain is None:
             raise RuntimeError("Call setup() first.")
 
+        # Decide whether to fetch DB context
         db_context = ""
         if self.sb.is_authenticated() and should_fetch_db(question):
             rows = self.sb.query_user_transactions(limit=self.cfg["DB_LIMIT"])
             db_context = format_transactions_for_context(rows)
 
-        answer = self.chain.invoke({"input": question, "chat_history": self.chat_history, "db_context": db_context})
+        # Build inputs for the chain
+        chain_inputs = {
+            "input": question,
+            "db_context": db_context,
+        }
 
-        self.chat_history.append(("human", question))
-        self.chat_history.append(("ai", answer))
-        return answer
+        # Invoke the RAG chain
+        raw_answer = self.chain.invoke(chain_inputs)
+
+        # Prepare user-facing answer: redact if enabled
+        if self.cfg.get("REDACT_PII"):
+            user_answer = redact_output(raw_answer)
+        else:
+            user_answer = raw_answer
+
+        return user_answer
