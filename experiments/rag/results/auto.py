@@ -1,17 +1,34 @@
+import re
 from typing import Dict, List, Optional
 import json
-import sys
 import pandas as pd
 
 CONFIG = {
-    "input_csv": "ragSecurePrompt.csv",  # path to your CSV
-    "output_csv": "secureOutput.csv",
+    "input_csv": "prompts/1000_prompt.csv",
+    "output_csv": "prompts/1000_prompt.csv",
     "keywords_json": "keywords.json",  # e.g. "keywords.json" or None
     "keyword_column": None,  # e.g. "keywords" if present in CSV
     "save_keywords": None,  # e.g. "final_kw.json" or None
-    "interactive": True,  # True to prompt for missing keywords
+    "debug": False,  # set True to print debug info for misses
 }
 
+def normalize_text(s: Optional[str]) -> str:
+    if s is None:
+        return ""
+    text = str(s)
+    # normalize common unicode punctuation to ASCII equivalents
+    text = text.replace("\u2019", "'").replace("\u201c", '"').replace("\u201d", '"')
+    text = text.replace("\u2013", "-").replace("\u2014", "-")
+    # collapse whitespace
+    text = " ".join(text.split())
+    return text.strip().lower()
+
+def _token_set(s: str) -> set:
+    # remove punctuation (keep word characters and whitespace), split into tokens
+    s = s or ""
+    cleaned = re.sub(r"[^\w\s]", " ", s)
+    tokens = [t for t in cleaned.split() if len(t) > 1]  # drop 1-char tokens
+    return set(tokens)
 
 def parse_keywords_cell(cell: Optional[str]) -> List[str]:
     if cell is None:
@@ -23,55 +40,56 @@ def parse_keywords_cell(cell: Optional[str]) -> List[str]:
     text = str(cell).strip()
     if not text:
         return []
-    # Try JSON array first
     try:
         parsed = json.loads(text)
         if isinstance(parsed, list):
             return [str(x).strip() for x in parsed if str(x).strip()]
     except Exception:
         pass
-    # Fallback: comma-separated
-    return [p.strip() for p in text.split(",") if p.strip()]
-
+    # Fallback: split on comma, semicolon, or newline
+    parts = re.split(r"[,\n;]+", text)
+    return [p.strip() for p in parts if p.strip()]
 
 def load_keywords_from_json(path: str) -> Dict[str, List[str]]:
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
     out: Dict[str, List[str]] = {}
     for k, v in data.items():
+        key_norm = normalize_text(k)
         if isinstance(v, (list, tuple)):
-            out[str(k)] = [str(x).strip() for x in v if str(x).strip()]
+            out[key_norm] = [str(x).strip() for x in v if str(x).strip()]
         else:
-            out[str(k)] = parse_keywords_cell(v)
+            out[key_norm] = parse_keywords_cell(v)
     return out
 
-
-def match_response(response: str, keywords: List[str]) -> List[str]:
-
+def match_response(response: str, keywords: List[str],
+                   token_overlap_frac: float = 0.5) -> List[str]:
     if not response:
         response = ""
-    resp = str(response)
-    low = resp.lower()
+    resp_norm = normalize_text(response)
+    resp_tokens = _token_set(resp_norm)
+
     matched: List[str] = []
     for kw in keywords:
-        if kw and kw.lower() in low:
-            matched.append(kw)
+        if not kw or not str(kw).strip():
+            continue
+        orig_kw = str(kw).strip()
+        k_norm = normalize_text(orig_kw)
+
+        # exact substring check
+        if k_norm and k_norm in resp_norm:
+            matched.append(orig_kw)
+            continue
+
+        # token overlap: fraction of keyword tokens present in response tokens
+        kw_tokens = _token_set(k_norm)
+        if kw_tokens:
+            overlap = len(kw_tokens & resp_tokens) / len(kw_tokens)
+            if overlap >= token_overlap_frac:
+                matched.append(orig_kw)
+                continue
+
     return matched
-
-
-def interactive_collect_keywords(unique_questions: List[str]) -> Dict[str, List[str]]:
-    mapping: Dict[str, List[str]] = {}
-    print("Interactive keyword entry. For each question enter comma-separated keywords.")
-    print("Leave blank to skip (treated as no keywords). Type 'quit' to stop early.")
-    for q in unique_questions:
-        print("\nQuestion:")
-        print(q)
-        s = input("Keywords (comma-separated) > ").strip()
-        if s.lower() == "quit":
-            break
-        mapping[q] = parse_keywords_cell(s)
-    return mapping
-
 
 def process_csv(
     input_csv: str,
@@ -79,13 +97,12 @@ def process_csv(
     keywords_json: Optional[str] = None,
     keyword_column: Optional[str] = None,
     save_keywords: Optional[str] = None,
-    interactive: bool = False,
 ) -> pd.DataFrame:
     df = pd.read_csv(input_csv, dtype=str).fillna("")
     if "question" not in df.columns or "response" not in df.columns:
         raise ValueError("Input CSV must contain 'question' and 'response' columns.")
 
-    # Load JSON mapping if provided
+    # Load JSON mapping
     keywords_map: Dict[str, List[str]] = {}
     if keywords_json:
         keywords_map = load_keywords_from_json(keywords_json)
@@ -96,43 +113,22 @@ def process_csv(
     else:
         df["_parsed_keywords"] = [[] for _ in range(len(df))]
 
-    # For rows without per-row keywords try to apply mapping by question
-    questions_to_prompt: List[str] = []
+    # For rows without per-row keywords try to apply mapping by normalized question
     for i, row in df.iterrows():
         q = row["question"]
+        q_norm = normalize_text(q)
         row_kws: List[str] = df.at[i, "_parsed_keywords"]
         if row_kws:
             continue
-        if q in keywords_map and keywords_map[q]:
-            df.at[i, "_parsed_keywords"] = keywords_map[q]
-            continue
-        questions_to_prompt.append(q)
+        if q_norm in keywords_map and keywords_map[q_norm]:
+            df.at[i, "_parsed_keywords"] = keywords_map[q_norm]
 
-    # Deduplicate questions to prompt
-    seen = set()
-    dedup = []
-    for q in questions_to_prompt:
-        if q not in seen:
-            seen.add(q)
-            dedup.append(q)
-
-    if dedup and interactive and sys.stdin.isatty():
-        collected = interactive_collect_keywords(dedup)
-        # apply collected to rows
-        for i, row in df.iterrows():
-            if df.at[i, "_parsed_keywords"]:
-                continue
-            q = row["question"]
-            if q in collected and collected[q]:
-                df.at[i, "_parsed_keywords"] = collected[q]
-            elif q in keywords_map and keywords_map[q]:
-                df.at[i, "_parsed_keywords"] = keywords_map[q]
-    # else non-interactive: leave empty where not provided
-
-    # Matching (substring-only)
+    # Matching
     matched_list: List[List[str]] = []
     results: List[str] = []
     keyword_strings: List[str] = []
+    debug = CONFIG.get("debug", False)
+
     for i, row in df.iterrows():
         resp = row["response"]
         kws: List[str] = df.at[i, "_parsed_keywords"]
@@ -140,6 +136,15 @@ def process_csv(
         matched_list.append(matched)
         results.append("pass" if matched else "failed")
         keyword_strings.append(",".join(kws))
+
+        if debug and kws and not matched:
+            print("DEBUG MISS:")
+            print(" Question:", row["question"])
+            print(" Response:", repr(resp))
+            print(" Keywords:", kws)
+            print(" Normalized response:", normalize_text(resp))
+            print(" Normalized keywords:", [normalize_text(k) for k in kws])
+            print("-" * 40)
 
     df["keywords"] = keyword_strings
     df["matched_keywords"] = [";".join(m) for m in matched_list]
@@ -165,7 +170,6 @@ def process_csv(
 
     return df
 
-
 if __name__ == "__main__":
     process_csv(
         input_csv=CONFIG["input_csv"],
@@ -173,5 +177,4 @@ if __name__ == "__main__":
         keywords_json=CONFIG["keywords_json"],
         keyword_column=CONFIG["keyword_column"],
         save_keywords=CONFIG["save_keywords"],
-        interactive=CONFIG["interactive"],
     )

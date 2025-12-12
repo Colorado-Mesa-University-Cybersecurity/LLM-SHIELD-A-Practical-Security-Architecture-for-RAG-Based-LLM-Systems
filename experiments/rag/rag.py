@@ -2,8 +2,7 @@ import os
 from dataclasses import dataclass
 from operator import itemgetter
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
-
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Callable
 import math
 import re
 import requests
@@ -21,11 +20,13 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import Runnable
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from prompt_guard import PromptGuard
 
 load_dotenv()
 
 # Config
-
+# You can login into hugging face for meta models by getting your token here: https://huggingface.co/settings/tokens
+# and running: hf auth login in your terminal
 CONFIG: Dict[str, Any] = {
     "DATA_PATHS": ["./docs"],
     "VS_DIR": "./.faiss_index",
@@ -43,6 +44,10 @@ CONFIG: Dict[str, Any] = {
 
     "SYSTEM_PROMPT": (),
 
+    # Chunking now measured in tokens (not characters)
+    "CHUNK_TOKENS": 512,
+    "CHUNK_TOKEN_OVERLAP": 20,
+
     # Supabase (optional)
     "SUPABASE_URL": os.getenv("SUPABASE_URL"),
     "SUPABASE_KEY": os.getenv("SUPABASE_KEY"),
@@ -54,11 +59,19 @@ CONFIG: Dict[str, Any] = {
 
     # CSV handling
     "CSV_ROWS_PER_DOC": 1,
-    "CSV_READ_CHUNKSIZE": 10000,
+    "CSV_READ_CHUNKSIZE": 512,
 
     # PII redaction (optional)
     # Set to True to apply PII redaction to documents and DB output.
     "REDACT_PII": False,
+
+    # Prompt Guard settings
+    "Verbose": True,
+    "PROMPT_GUARD_ENABLED": True,
+    "PROMPT_GUARD_MODEL": "meta-llama/Llama-Prompt-Guard-2-22M",
+    "PROMPT_GUARD_THRESHOLD": 0.6,
+    # If True, also run the guard on retrieved documents before passing to LLM
+    "PROMPT_GUARD_CHECK_RETRIEVED_DOCS": False,
 }
 
 MODELS = [
@@ -266,9 +279,49 @@ def load_documents(inputs: Iterable[str]) -> List[Document]:
     return docs
 
 
-def chunk_docs(docs: List[Document], chunk_size=1000, chunk_overlap=150) -> List[Document]:
+def _get_token_counter(model_hint: Optional[str] = None) -> Callable[[str], int]:
+    try:
+        import tiktoken
+
+        def _tiktoken_count(s: str) -> int:
+            if not s:
+                return 0
+            try:
+                # try to get an encoding for a model if possible, else use cl100k_base
+                try:
+                    enc = tiktoken.encoding_for_model(model_hint) if model_hint else tiktoken.get_encoding("cl100k_base")
+                except Exception:
+                    enc = tiktoken.get_encoding("cl100k_base")
+                return len(enc.encode(s))
+            except Exception:
+                # fallback to simple split
+                return len(s.split())
+
+        return _tiktoken_count
+    except ImportError:
+        pass
+    def _fallback_count(s: str) -> int:
+        if not s:
+            return 0
+        return len(re.findall(r"\S+", s))
+
+    return _fallback_count
+
+
+def chunk_docs(docs: List[Document], chunk_tokens: Optional[int] = None, chunk_overlap_tokens: Optional[int] = None,
+               model_hint: Optional[str] = None) -> List[Document]:
+    if chunk_tokens is None:
+        chunk_tokens = int(CONFIG.get("CHUNK_TOKENS", 512))
+    if chunk_overlap_tokens is None:
+        chunk_overlap_tokens = int(CONFIG.get("CHUNK_TOKEN_OVERLAP", 20))
+
+    token_counter = _get_token_counter(model_hint=model_hint)
+
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=chunk_size, chunk_overlap=chunk_overlap, length_function=len, add_start_index=True
+        chunk_size=chunk_tokens,
+        chunk_overlap=chunk_overlap_tokens,
+        length_function=token_counter,
+        add_start_index=True,
     )
     return splitter.split_documents(docs)
 
@@ -321,7 +374,11 @@ def ensure_vectorstore(
     print(f"[index] Loaded {len(docs)} raw documents.")
 
     print("[index] Splitting into chunks...")
-    chunks = chunk_docs(docs)
+    model_hint = embed_model_name or CONFIG.get("LLM_NAME")
+    chunks = chunk_docs(docs,
+                        chunk_tokens=int(CONFIG.get("CHUNK_TOKENS", 512)),
+                        chunk_overlap_tokens=int(CONFIG.get("CHUNK_TOKEN_OVERLAP", 128)),
+                        model_hint=model_hint)
     print(f"[index] Created {len(chunks)} chunks.")
 
     print(f"[index] Building FAISS at {vs_dir} ...")
@@ -576,6 +633,7 @@ class RAGApp:
         self.llm: Optional[BaseChatModel] = None
         self.chain: Optional[Runnable] = None
         self.sb = SupabaseSession.from_config(cfg)
+        self.prompt_guard: Optional[PromptGuard] = None
 
     def setup(self) -> None:
         vs_dir = Path(self.cfg["VS_DIR"]).resolve()
@@ -598,6 +656,21 @@ class RAGApp:
         self.chain = build_rag_chain(
             self.llm, self.vs, system_prompt=self.cfg["SYSTEM_PROMPT"], k=self.cfg["TOP_K"]
         )
+
+        # Initialize Prompt Guard if enabled
+        if self.cfg.get("PROMPT_GUARD_ENABLED") and self.cfg.get("PROMPT_GUARD_MODEL"):
+            try:
+                self.prompt_guard = PromptGuard(
+                    model_id=self.cfg.get("PROMPT_GUARD_MODEL"),
+                    threshold=float(self.cfg.get("PROMPT_GUARD_THRESHOLD", 0.6)),
+                )
+                print(f"[security] Prompt Guard loaded: {self.cfg.get('PROMPT_GUARD_MODEL')}")
+            except Exception as e:
+                self.prompt_guard = None
+                print(f"[security] Failed to load Prompt Guard: {e}")
+        else:
+            self.prompt_guard = None
+            print("[security] Prompt Guard not enabled or no model configured.")
 
         if self.sb.is_configured():
             print("[db] Supabase is configured. Call app.login(email, password) to authenticate.")
@@ -626,11 +699,43 @@ class RAGApp:
         if self.chain is None:
             raise RuntimeError("Call setup() first.")
 
+        # First: run prompt guard on the raw user question (fast failure for direct injections/jailbreaks)
+        if getattr(self, "prompt_guard", None):
+            try:
+                q_res = self.prompt_guard.check_text(question)
+            except Exception as e:
+                # On unexpected errors, log and continue
+                print(f"[guard] Error running prompt guard on question: {e}")
+                q_res = {"is_malicious": False, "malicious_prob": 0.0, "label": "BENIGN", "per_chunk": []}
+
+            if Verbose := self.cfg.get("Verbose", True):
+                label = q_res.get("label", "UNKNOWN")
+                prob = float(q_res.get("malicious_prob", 0.0))
+                is_mal = bool(q_res.get("is_malicious", False))
+                print(
+                    f"[guard] Question: label={label}, malicious_prob={prob:.3f}, is_malicious={is_mal}")
+
+            if q_res.get("is_malicious"):
+                print(f"[guard] Blocked prompt: malicious_prob={q_res.get('malicious_prob', 0.0):.2f}")
+                return "We couldn’t process that request because it looks like an attempt to change system-level instructions. If you meant something else, please rephrase and try again. If this seems incorrect, contact support and include code: ERR_OVERRIDE_INSTRUCTIONS."
+
         # Decide whether to fetch DB context
         db_context = ""
         if self.sb.is_authenticated() and should_fetch_db(question):
             rows = self.sb.query_user_transactions(limit=self.cfg["DB_LIMIT"])
             db_context = format_transactions_for_context(rows)
+
+        #  check top-k retrieved documents
+        if getattr(self, "prompt_guard", None) and self.cfg.get("PROMPT_GUARD_CHECK_RETRIEVED_DOCS") and self.vs:
+            try:
+                docs = self.vs.similarity_search(question, k=int(self.cfg.get("TOP_K", 4)))
+                docs_text = "\n\n".join([d.page_content for d in docs])
+                d_res = self.prompt_guard.check_text(docs_text)
+                if d_res.get("is_malicious"):
+                    print(f"[guard] Retrieved docs flagged: {d_res.get('malicious_prob', 0.0):.2f}")
+                    return "Retrieved documents appear to include instructions that override system behavior. Cannot proceed."
+            except Exception as e:
+                print(f"[guard] Error checking retrieved docs: {e}")
 
         # Build inputs for the chain
         chain_inputs = {
