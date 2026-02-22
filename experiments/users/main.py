@@ -13,7 +13,7 @@ SYSTEM_PROMPTS: Set[str] = {
     "1000_prompt.txt",
 }
 
-PROMPTS_FILE = Path("docs/asks.txt")  # each line is a user prompt (blank lines and lines starting with # are ignored)
+PROMPTS_FILE = Path("docs/prompt_injection.txt")  # each line is a user prompt (blank lines and lines starting with # are ignored)
 LOG_DIR = Path("results/prompts")
 DEFAULT_LOG_STEM = "run_results"
 
