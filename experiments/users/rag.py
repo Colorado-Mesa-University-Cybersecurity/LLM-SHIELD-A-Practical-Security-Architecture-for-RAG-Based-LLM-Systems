@@ -34,7 +34,7 @@ load_dotenv()
 CONFIG: Dict[str, Any] = {
     "DATA_PATHS": ["./downloads"],
     "VS_DIR": "./.faiss_index",
-    "REBUILD_INDEX": False,
+    "REBUILD_INDEX": True,
 
     "EMBED_MODEL": "BAAI/bge-small-en-v1.5",
 

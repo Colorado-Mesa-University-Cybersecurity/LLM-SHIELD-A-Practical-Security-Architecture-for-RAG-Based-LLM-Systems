@@ -8,13 +8,13 @@ from rag import RAGApp, CONFIG
 SYSTEM_PROMPTS_DIR = Path("docs/system_prompts")  # directory containing the prompt files
 SYSTEM_PROMPTS: Set[str] = {
     "100_prompt.txt",
-    "300_prompt.txt",
     "500_prompt.txt",
     "1000_prompt.txt",
+    "1500_prompt.txt",
 }
 
-PROMPTS_FILE = Path("docs/prompt_injection.txt")  # each line is a user prompt (blank lines and lines starting with # are ignored)
-LOG_DIR = Path("results/prompts")
+PROMPTS_FILE = Path("docs/attack_Prompts.txt")  # each line is a user prompt (blank lines and lines starting with # are ignored)
+LOG_DIR = Path("results/prompts/")  # directory where the CSV logs will be saved
 DEFAULT_LOG_STEM = "run_results"
 
 
@@ -61,7 +61,7 @@ def run_for_system_prompt(system_prompt_path: Path, asks: List[str]):
     system_prompt_content = read_system_prompt(system_prompt_path)
     user_email = CONFIG.get("TEST_EMAIL", "unknown@example.com")
     CONFIG["SYSTEM_PROMPT"] = f"The current user's email: {user_email}\n\n{system_prompt_content}"
-    CONFIG["PROMPT_GUARD_ENABLED"] = False
+    CONFIG["PROMPT_GUARD_ENABLED"] = True
     CONFIG["REBUILD_INDEX"] = True
     CONFIG["REDACT_PII"] = True
     CONFIG["LLM_NAME"] = "Meta-Llama-3.1-8B-Instruct"
