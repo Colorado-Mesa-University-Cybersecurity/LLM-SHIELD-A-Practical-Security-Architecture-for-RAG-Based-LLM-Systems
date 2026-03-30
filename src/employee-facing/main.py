@@ -13,10 +13,9 @@ SYSTEM_PROMPTS: Set[str] = {
     "1500_prompt.txt",
 }
 
-PROMPTS_FILE = Path("docs/attack_Prompts.txt")  # each line is a user prompt (blank lines and lines starting with # are ignored)
+PROMPTS_FILE = Path("docs/attack_prompts.txt")  # each line is a user prompt (blank lines and lines starting with # are ignored)
 LOG_DIR = Path("results/prompts/")  # directory where the CSV logs will be saved
 DEFAULT_LOG_STEM = "run_results"
-
 
 def ensure_log_header(path: Path):
     if not path.parent.exists():
