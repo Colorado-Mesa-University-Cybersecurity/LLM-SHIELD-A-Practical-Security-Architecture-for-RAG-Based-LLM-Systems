@@ -8,9 +8,9 @@ from rag import RAGApp, CONFIG
 SYSTEM_PROMPTS_DIR = Path("docs/system_prompts")  # directory containing the prompt files
 SYSTEM_PROMPTS: Set[str] = {
     "100_prompt.txt",
-    "300_prompt.txt",
     "500_prompt.txt",
     "1000_prompt.txt",
+    "1500_prompt.txt",
 }
 
 PROMPTS_FILE = Path("docs/asks.txt")  # each line is a user prompt (blank lines and lines starting with # are ignored)
