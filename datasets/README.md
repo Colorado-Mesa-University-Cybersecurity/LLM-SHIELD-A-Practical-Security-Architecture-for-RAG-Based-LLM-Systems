@@ -1,1 +1,0 @@
-This folder should contain the datasets used for training and evaluating the models. Please ensure that you have the necessary permissions to use and share these datasets. If you have any questions or need assistance, feel free to reach out to the project maintainers.
