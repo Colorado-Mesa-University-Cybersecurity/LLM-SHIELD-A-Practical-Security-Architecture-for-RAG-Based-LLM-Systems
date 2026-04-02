@@ -44,7 +44,7 @@ CONFIG: Dict[str, Any] = {
     "MAX_NEW_TOKENS": 1024,
     "TEMPERATURE": 0.2,
 
-    "TOP_K": 4,
+    "TOP_K": 5,
 
     "SYSTEM_PROMPT": (),
 
