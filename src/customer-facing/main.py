@@ -13,7 +13,7 @@ SYSTEM_PROMPTS: Set[str] = {
     "1500_prompt.txt",
 }
 
-PROMPTS_FILE = Path("docs/asks.txt")  # each line is a user prompt (blank lines and lines starting with # are ignored)
+PROMPTS_FILE = Path("docs/attack_prompt.txt")  # each line is a user prompt (blank lines and lines starting with # are ignored)
 LOG_DIR = Path("results/prompts")
 DEFAULT_LOG_STEM = "run_results"
 
@@ -62,7 +62,7 @@ def run_for_system_prompt(system_prompt_path: Path, asks: List[str]):
     user_email = CONFIG.get("TEST_EMAIL", "unknown@example.com")
 
     CONFIG["SYSTEM_PROMPT"] = f"The current user's email: {user_email}\n\n{system_prompt_content}"
-    CONFIG["PROMPT_GUARD_ENABLED"] = False
+    CONFIG["PROMPT_GUARD_ENABLED"] = True
     CONFIG["REBUILD_INDEX"] = True
     CONFIG["REDACT_PII"] = True
     CONFIG["LLM_NAME"] = "Meta-Llama-3.1-8B-Instruct"
