@@ -14,7 +14,7 @@ SYSTEM_PROMPTS: Set[str] = {
 }
 
 PROMPTS_FILE = Path("docs/attack_prompt.txt")  # each line is a user prompt (blank lines and lines starting with # are ignored)
-LOG_DIR = Path("results/prompts/")  # directory where the CSV logs will be saved
+LOG_DIR = Path("results/unprotected/")  # directory where the CSV logs will be saved
 DEFAULT_LOG_STEM = "run_results"
 
 def ensure_log_header(path: Path):
@@ -60,9 +60,9 @@ def run_for_system_prompt(system_prompt_path: Path, asks: List[str]):
     system_prompt_content = read_system_prompt(system_prompt_path)
     user_email = CONFIG.get("TEST_EMAIL", "unknown@example.com")
     CONFIG["SYSTEM_PROMPT"] = f"The current user's email: {user_email}\n\n{system_prompt_content}"
-    CONFIG["PROMPT_GUARD_ENABLED"] = True
+    CONFIG["PROMPT_GUARD_ENABLED"] = False
     CONFIG["REBUILD_INDEX"] = True
-    CONFIG["REDACT_PII"] = True
+    CONFIG["REDACT_PII"] = False
     CONFIG["LLM_NAME"] = "Meta-Llama-3.1-8B-Instruct"
 
     log_name = f"{system_prompt_path.stem}.csv"
