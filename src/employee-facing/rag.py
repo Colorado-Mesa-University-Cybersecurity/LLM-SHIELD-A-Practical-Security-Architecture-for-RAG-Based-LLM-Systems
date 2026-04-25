@@ -13,8 +13,6 @@ from langchain_community.chat_models import ChatLlamaCpp
 from langchain_community.document_loaders import PyPDFLoader, TextLoader, Docx2txtLoader
 from langchain_community.vectorstores import FAISS
 import tiktoken
-from langchain_community.document_loaders import UnstructuredWordDocumentLoader  # type: ignore
-from langchain_community.document_loaders import UnstructuredFileLoader  # type: ignore
 # LangChain / LLM / embeddings / vector store
 from langchain_core.documents import Document
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -222,21 +220,26 @@ def _load_one(path: Path) -> List[Document]:
         chunksize_val = int(chunksize) if chunksize else None
         docs = load_csv(path, rows_per_doc=rows_per_doc, sep=sep, encoding="utf-8", chunksize=chunksize_val)
     elif suffix == ".doc":
+        try:
+            from langchain_community.document_loaders import UnstructuredWordDocumentLoader  # type: ignore
+        except Exception as e:
+            raise RuntimeError("Install 'unstructured[doc]' to handle .doc, or convert to .docx") from e
         loader = UnstructuredWordDocumentLoader(str(path))
         docs = loader.load()
     else:
         try:
+            from langchain_community.document_loaders import UnstructuredFileLoader  # type: ignore
             loader = UnstructuredFileLoader(str(path))
             docs = loader.load()
-        except Exception as e:
-            raise RuntimeError(f"Unsupported file type or failed to load: {path} ({e})")
+        except Exception:
+            raise RuntimeError(f"Unsupported file type: {path.suffix} for {path}")
     for d in docs:
         d.metadata.setdefault("source", str(path))
     return docs
 
-def load_documents(inputs: Iterable[str]) -> List[Document]:
+def load_documents(inputs: Iterable[str], skip_filenames: Optional[List[str]] = None) -> List[Document]:
     docs: List[Document] = []
-    skip = {fn.lower() for fn in CONFIG.get("SKIP_FILENAMES", [])}
+    skip = {fn.lower() for fn in (skip_filenames if skip_filenames is not None else CONFIG.get("SKIP_FILENAMES", []))}
     for inp in list(inputs):
         try:
             for path in _iter_paths([inp]):
@@ -308,6 +311,7 @@ def ensure_vectorstore(
         vs_dir: Path,
         rebuild: bool,
         embed_model_name: str,
+        skip_filenames: Optional[List[str]] = None,
 ) -> Tuple[FAISS, HuggingFaceEmbeddings]:
     embedder = get_embeddings(embed_model_name)
     vs = None
@@ -317,7 +321,7 @@ def ensure_vectorstore(
             print(f"[index] Loaded existing FAISS index from {vs_dir}")
             return vs, embedder
     print("[index] Loading source documents...")
-    docs = load_documents(data_paths)
+    docs = load_documents(data_paths, skip_filenames=skip_filenames)
     if not docs:
         raise RuntimeError("No documents loaded. Check your paths and supported file types.")
     print(f"[index] Loaded {len(docs)} raw documents.")
@@ -677,6 +681,7 @@ class RAGApp:
                 vs_dir=vs_dir,
                 rebuild=self.cfg["REBUILD_INDEX"],
                 embed_model_name=self.cfg["EMBED_MODEL"],
+                skip_filenames=self.cfg.get("SKIP_FILENAMES"),
             )
         except RuntimeError as e:
             # No documents loaded or other index building problem

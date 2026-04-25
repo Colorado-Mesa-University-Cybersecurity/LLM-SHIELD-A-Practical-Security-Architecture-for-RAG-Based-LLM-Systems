@@ -272,9 +272,9 @@ def _load_one(path: Path) -> List[Document]:
     return docs
 
 
-def load_documents(inputs: Iterable[str]) -> List[Document]:
+def load_documents(inputs: Iterable[str], skip_filenames: Optional[List[str]] = None) -> List[Document]:
     docs: List[Document] = []
-    skip = {fn.lower() for fn in CONFIG.get("SKIP_FILENAMES", [])}
+    skip = {fn.lower() for fn in (skip_filenames if skip_filenames is not None else CONFIG.get("SKIP_FILENAMES", []))}
     for inp in list(inputs):
         try:
             for path in _iter_paths([inp]):
@@ -370,6 +370,7 @@ def ensure_vectorstore(
         vs_dir: Path,
         rebuild: bool,
         embed_model_name: str,
+        skip_filenames: Optional[List[str]] = None,
 ) -> Tuple[FAISS, HuggingFaceEmbeddings]:
     embedder = get_embeddings(embed_model_name)
     vs = None
@@ -380,7 +381,7 @@ def ensure_vectorstore(
             return vs, embedder
 
     print("[index] Loading source documents...")
-    docs = load_documents(data_paths)
+    docs = load_documents(data_paths, skip_filenames=skip_filenames)
     if not docs:
         raise RuntimeError("No documents loaded. Check your paths and supported file types.")
     print(f"[index] Loaded {len(docs)} raw documents.")
@@ -657,6 +658,7 @@ class RAGApp:
             vs_dir=vs_dir,
             rebuild=self.cfg["REBUILD_INDEX"],
             embed_model_name=self.cfg["EMBED_MODEL"],
+            skip_filenames=self.cfg.get("SKIP_FILENAMES"),
         )
 
         n_gpu_layers = -1 if self.cfg["GPU_OFFLOAD"] else 0

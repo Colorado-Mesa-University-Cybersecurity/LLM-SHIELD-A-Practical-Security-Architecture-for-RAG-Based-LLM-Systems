@@ -200,12 +200,21 @@ def run_one_config(
                 f"{system_prompt_content}"
             ),
             "LLM_NAME":              cfg.model_name,
-            "PROMPT_GUARD_ENABLED":  cfg.protected,
             "REBUILD_INDEX":         should_rebuild,
-            "REDACT_PII":            False,
             "Verbose":               False,
             # Never index benchmark infrastructure files
-            "SKIP_FILENAMES":        ["attack_prompt.txt", "malicious prompt.txt"],
+            "SKIP_FILENAMES":        [
+                "attack_prompt.txt",
+                "malicious prompt.txt",
+                "100_prompt.txt",
+                "500_prompt.txt",
+                "1000_prompt.txt",
+                "1500_prompt.txt",
+            ],
+            # --- protection flags: all on for protected, all off for unprotected ---
+            "PROMPT_GUARD_ENABLED":              cfg.protected,
+            "PROMPT_GUARD_CHECK_RETRIEVED_DOCS": cfg.protected,
+            "REDACT_PII":                        cfg.protected,
         }
 
         log_path = log_dir / f"{Path(prompt_fname).stem}.csv"
@@ -243,27 +252,51 @@ def run_one_config(
 
 
 # ---------------------------------------------------------------------------
+# Guardrail analysis (runs after all protected configs complete)
+# ---------------------------------------------------------------------------
+
+def run_guardrail_analysis() -> None:
+    spec = importlib.util.spec_from_file_location(
+        "guardrail_analysis",
+        SRC_DIR / "shared" / "guardrail_analysis.py",
+    )
+    ga = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ga)
+
+    protected_dirs = sorted({
+        RESULTS_ROOT / cfg.side_name / cfg.model_name / "protected"
+        for cfg in CONFIGS
+        if cfg.protected
+    })
+
+    for d in protected_dirs:
+        if not d.exists() or not any(d.glob("*_prompt.csv")):
+            print(f"  [guardrail] No CSVs found in {d.relative_to(ROOT_DIR)}, skipping.")
+            continue
+        print(f"\n  [guardrail] {d.relative_to(ROOT_DIR)}")
+        try:
+            ga.build_guardrail_reports(
+                prompts_dir=str(d),
+                summary_csv="guardrail_summary.csv",
+                failures_csv="guardrail_failures.csv",
+                response_match_text=ga.TARGET_BLOCK_RESPONSE,
+                filename_glob="*_prompt.csv",
+                expected_prompt_ids=["100", "500", "1000", "1500"],
+            )
+        except Exception as e:
+            print(f"  [guardrail] Error analysing {d}: {e}")
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    # Locate attack prompts — shared copy takes priority; side-specific copies are fallbacks.
-    # To use a single shared file, place it at:  src/shared/attack_prompt.txt
-    attack_prompts_path: Path | None = None
-    for candidate in [
-        SRC_DIR / "shared" / "attack_prompt.txt",
-        CUSTOMER_DIR / "docs" / "attack_prompt.txt",
-        EMPLOYEE_DIR / "docs" / "attack_prompt.txt",
-    ]:
-        if candidate.exists():
-            attack_prompts_path = candidate
-            break
-
-    if attack_prompts_path is None:
+    attack_prompts_path = SRC_DIR / "shared" / "attack_prompt.txt"
+    if not attack_prompts_path.exists():
         raise SystemExit(
-            "Attack prompts file not found.\n"
-            "Expected: src/shared/attack_prompt.txt\n"
-            "Fallback:  src/customer-facing/docs/attack_prompt.txt"
+            f"Attack prompts file not found: {attack_prompts_path}\n"
+            "Expected location: src/shared/attack_prompt.txt"
         )
 
     attack_prompts = read_attack_prompts(attack_prompts_path)
@@ -302,6 +335,11 @@ def main() -> None:
     print(f"  All {len(CONFIGS)} configurations complete in {elapsed / 60:.1f} min.")
     print(f"  Results saved under: {RESULTS_ROOT}")
     print("=" * 72)
+
+    print(f"\n{'='*72}")
+    print("  Guardrail analysis")
+    print("=" * 72)
+    run_guardrail_analysis()
 
 
 if __name__ == "__main__":
