@@ -1,41 +1,132 @@
-# Environments Overview
+# Specialized AI Agents — Secure RAG Architecture
 
-This repository implements a secure Retrieval-Augmented Generation (RAG) architecture designed for both internal staff and external clients, as described in our paper:
+This repository implements a secure Retrieval-Augmented Generation (RAG) architecture designed for both internal staff and external clients, as described in:
 
 *Anthony Mora, Jayden Alonzo-Estrada, Ram Basnet. "A Practical Security Architecture for Company RAG‑LLM Systems"*
 
-Two environments are provided in the `src` directory, each with distinct access controls, security policies, and use-cases:
+---
 
-## 1. customer-facing
+## Repository layout
 
-This folder contains the client-facing environment. It is designed for use by external clients (such as customers or business partners) who require information retrieval from company sources. Security in this environment emphasizes strict access boundaries—clients can only interact with context and data relevant to them. Defensive system prompts, PII redaction, and input validation are tailored to prevent cross-client data leakage and block adversarial requests.
-
-- **Audience:** External clients
-- **Features:** Strict data isolation, enhanced prompt guard, output PII redaction
-- **Example use:** Customer portals, knowledge bases
-
-## 2. employee-facing
-
-This folder contains the environment for internal company use. It is intended for employees and staff, offering broader document access and administrative tools. While security remains a priority (identity-based access control, PII redaction, prompt guard), permission policies and context retrieval are designed for internal collaboration and company operations. 
-
-- **Audience:** Company employees
-- **Features:** Employee authentication, role-based access, document management
-- **Example use:** Internal dashboards, support tools, HR document access
-
-## 3. documents for both environments
-
-For the customer-facing environment, documents must be provided manually—users upload or supply the files needed for retrieval. In contrast, the internal-tools (employee-facing) environment is configured to download source documents directly from our Supabase (Postgres) database. However, since the company database is not public, all necessary files for both environments are already included in this repository, organized in the appropriate folders. This allows you to test and evaluate both environments without external data access.
+```
+Specialized-AI-Agents/
+├── main.py                    — master benchmark runner (all 8 configurations)
+├── results/                   — all benchmark output CSVs
+│   ├── customer-facing/
+│   │   ├── Qwen3-8B/
+│   │   │   ├── protected/
+│   │   │   └── unprotected/
+│   │   └── Meta-Llama-3.1-8B-Instruct/
+│   │       ├── protected/
+│   │       └── unprotected/
+│   └── employee-facing/
+│       ├── Qwen3-8B/
+│       │   ├── protected/
+│       │   └── unprotected/
+│       └── Meta-Llama-3.1-8B-Instruct/
+│           ├── protected/
+│           └── unprotected/
+└── src/
+    ├── shared/
+    │   ├── prompt_guard.py    — PromptGuard implementation (shared)
+    │   └── attack_prompt.txt  — adversarial prompts used by all benchmarks
+    ├── customer-facing/       — external client RAG environment
+    └── employee-facing/       — internal staff RAG environment
+```
 
 ---
 
-## Architecture Summary
+## Environments
+
+### 1. customer-facing
+
+Designed for external clients querying company documents. Security emphasises strict access boundaries — clients can only interact with context relevant to them. Defensive system prompts, PII redaction, and prompt-guard input validation prevent cross-client data leakage and adversarial requests.
+
+- **Audience:** External clients
+- **Auth:** Raw HTTP to Supabase REST API
+- **Features:** Prompt Guard, output PII redaction, Supabase row-level security
+- **Example use:** Customer portals, knowledge bases
+
+### 2. employee-facing
+
+Designed for internal company staff with broader document access and Supabase Storage file download support. Security remains a priority (identity-based access control, PII redaction, prompt guard), but permission policies are suited for internal collaboration.
+
+- **Audience:** Company employees
+- **Auth:** Supabase Python SDK
+- **Features:** Prompt Guard, file download from Supabase Storage, PII redaction
+- **Example use:** Internal dashboards, HR document access, support tools
+
+---
+
+## Running the master benchmark
+
+The root `main.py` runs **8 configurations** covering both environments, both supported models, and both protected/unprotected modes:
+
+```bash
+python main.py
+```
+
+| # | Side | Model | Guard |
+|---|------|-------|-------|
+| 1 | customer-facing | Qwen3-8B | protected |
+| 2 | customer-facing | Qwen3-8B | unprotected |
+| 3 | customer-facing | Meta-Llama-3.1-8B-Instruct | protected |
+| 4 | customer-facing | Meta-Llama-3.1-8B-Instruct | unprotected |
+| 5 | employee-facing | Qwen3-8B | protected |
+| 6 | employee-facing | Qwen3-8B | unprotected |
+| 7 | employee-facing | Meta-Llama-3.1-8B-Instruct | protected |
+| 8 | employee-facing | Meta-Llama-3.1-8B-Instruct | unprotected |
+
+Each configuration runs all four system prompt variants (`100_prompt`, `500_prompt`, `1000_prompt`, `1500_prompt`) against every line in `src/shared/attack_prompt.txt`, producing one CSV per system prompt under `results/<side>/<model>/<protected|unprotected>/`.
+
+CSV columns: `system_prompt_file, question, response, duration_seconds`
+
+Each side's individual `main.py` can also be run standalone (unprotected, Meta-Llama only):
+```bash
+cd src/customer-facing && python main.py
+cd src/employee-facing && python main.py
+```
+
+---
+
+## Security architecture
 
 Both environments implement the same RAG security pipeline:
 
-- **Prompt Guard:** Input validation and sanitization using Llama Prompt Guard.
-- **PII Redaction:** Automated removal of sensitive identifiers at ingestion, in metadata, and output.
-- **Identity-Based Access Control:** Access policies enforced by user role and authentication status.
+| Layer | Mechanism | Detail |
+|-------|-----------|--------|
+| Input screening | Prompt Guard | `meta-llama/Llama-Prompt-Guard-2-22M` classifies input; requests above threshold are rejected (fail-closed) |
+| PII redaction | Regex-based | Masks credit cards (keep last 4), SSNs, and email local parts |
+| Access control | Supabase RLS | DB queries scoped to `user_id=eq.<authenticated_user>` |
+| Metadata safety | Key sanitisation | Metadata keys and values are normalised and length-capped |
+| Document filtering | `SKIP_FILENAMES` | Configurable list of filenames excluded from RAG indexing |
 
 ---
 
-*For more background and security analysis, see the full research paper and references in the repository.*
+## Environment variables
+
+Create a `.env` file in the project root (never commit it):
+
+```
+SUPABASE_URL=https://xxxx.supabase.co
+SUPABASE_KEY=<service-role-key>       # used server-side only
+SUPABASE_ANON_KEY=<anon-key>          # used for user-scoped REST calls
+SUPABASE_BUCKET=Company files         # employee-facing storage bucket
+SUPABASE_EMAIL=user@example.com       # test account
+SUPABASE_PASSWORD=yourpassword
+```
+
+---
+
+## Dependencies
+
+```bash
+pip install langchain langchain-community langchain-core langchain-huggingface langchain-text-splitters
+pip install faiss-cpu huggingface-hub tiktoken python-dotenv pandas requests
+pip install transformers torch
+pip install supabase          # employee-facing only
+```
+
+---
+
+*For security analysis and evaluation methodology, see the full research paper.*

@@ -1,217 +1,150 @@
-# RAG App — Code walkthrough and handoff notes
+# Employee-Facing RAG App
 
-This document explains the `rag_app_setup.py` codebase in detail so another researcher can pick it up, run it, and continue development. It covers the overall purpose, file structure, key modules and classes, runtime flow, configuration and environment variables, debugging tips, and suggested next steps.
+Internal staff RAG pipeline described in:
 
-If anything here is unclear or you want extra diagrams or sequence traces, tell me what to expand.
+*Anthony Mora, Jayden Alonzo-Estrada, Ram Basnet. "A Practical Security Architecture for Company RAG‑LLM Systems"*
 
----
-
-## Quick summary
-
-`rag_app_setup.py` is a small RAG (retrieval-augmented generation) app scaffold that:
-
-- Connects to Supabase to authenticate a user and download that user's files from a storage bucket.
-- Loads local files (PDF, text, CSV, Word, others) into LangChain `Document` objects.
-- Optionally builds or loads a FAISS vector index of document chunks using HuggingFace embeddings.
-- Loads a local chat model (GGUF via LangChain community Llama wrapper) and composes a basic RAG runnable chain.
-- Provides PII redaction utilities and a prompt guard integration.
-- Offers a CLI-style `__main__` that logs in, downloads files, and optionally builds an index.
-
-Primary classes and functions you will work with:
-- `CONFIG` — global configuration and feature flags
-- `SupabaseSession` — Supabase auth, listing, and download helpers
-- `RAGApp` — top-level app that wires Supabase, index, LLM, chain, and prompt guard
-- Document loading, chunking, embedding, FAISS index build/load functions
+Employees query company documents retrieved from Supabase Storage. The pipeline supports file download, identity-based access control, PII redaction, and prompt-guard input screening.
 
 ---
 
-## How to run
+## Directory layout
 
-1. Create a Python environment with the required packages. The code uses:
-   - supabase (supabase-py)
-   - requests
-   - python-dotenv (dotenv)
-   - pandas
-   - langchain- community modules in the script (see imports)
-   - langchain-core, langchain-huggingface, langchain-text-splitters
-   - huggingface-hub
-   - tiktoken
-   - FAISS backend and related binary dependencies
-   - prompt_guard (a small helper, likely a third-party or in-repo tool)
+```
+employee-facing/
+├── main.py               — standalone benchmark (unprotected, Meta-Llama, all system prompts)
+├── rag.py                — RAG pipeline, Supabase SDK session, file download helpers
+├── prompt_guard.py       — re-exports PromptGuard from src/shared/
+└── docs/
+    ├── system_prompts/   — .txt files, one per token-length variant
+    │   ├── 100_prompt.txt
+    │   ├── 500_prompt.txt
+    │   ├── 1000_prompt.txt
+    │   └── 1500_prompt.txt
+    └── EMAILS.csv        — sample company emails indexed by FAISS
+```
 
-   Exact package names and versions matter. If you need a requirements file, tell me and I can draft one.
+Attack prompts are shared across both environments and live at:
+```
+src/shared/attack_prompt.txt
+```
 
-2. Environment variables (via `.env` or export):
-   - `SUPABASE_URL` — full Supabase URL (e.g. https://xxxx.supabase.co)
-   - `SUPABASE_KEY` — service role or anon key (admin operations use the configured flow)
-   - `SUPABASE_BUCKET` — optional string, default `"Company files"`
-   - `SUPABASE_EMAIL` / `SUPABASE_PASSWORD` — test credentials used by the script main flow
-   - Any Hugging Face credentials if your model access requires them
+FAISS index is built automatically on first run and cached at:
+```
+src/employee-facing/.faiss_index/
+```
 
-3. Run:
-   - `python rag_app_setup.py`
-   - The `__main__` section attempts to log in using `TEST_EMAIL` / `TEST_PASSWORD`. If login succeeds it will list and download user files into `downloads` and set `REBUILD_INDEX = True` if any files were retrieved, then call `setup()` which may build the index.
+Downloaded user files land in:
+```
+src/employee-facing/downloads/
+```
 
----
-
-## File and function overview
-
-I summarize the major code areas and explain intent, inputs, outputs, and gotchas.
-
-### CONFIG
-- Central place for runtime options, model names, and feature toggles.
-- Important flags:
-  - `DATA_PATHS`: directories to read documents from (default `./downloads`)
-  - `VS_DIR`: persistent FAISS index directory
-  - `REBUILD_INDEX`: if True, build a fresh vectorstore
-  - `EMBED_MODEL`: HuggingFace embeddings model id
-  - `LLM_NAME`, `CTX_TOKENS`, `MAX_NEW_TOKENS`, `TEMPERATURE`: local LLM settings
-  - `TOP_K`: retrieval count for RAG responses
-  - `PROMPT_GUARD_*`: prompt guard config
-  - `REDACT_PII`: enable PII redaction for outputs and metadata
-
-Change these to tune behavior. Many are read as strings or ints; be careful if loading from env.
-
-### SupabaseSession
-Responsibilities:
-- Create and hold two supabase clients:
-  - `admin_client` created with `SUPABASE_KEY` (the key from `CONFIG`) for authentication calls.
-  - `user_client` created with the user's access token for storage reads that must run in the user's context.
-- Authenticate using `admin_client.auth.sign_in_with_password(...)`. The code handles a few response shapes (object-like or dict).
-- Provide storage helpers:
-  - `list_objects(bucket, prefix, limit)` returns object names (normalized).
-  - `download_object(bucket, object_path)` uses the user client to download a single object.
-  - `download_objects_to_dir(bucket, object_paths, dest_dir)` saves object bytes to a local dir and returns result tuples.
-
-Notes and pitfalls:
-- The code expects the supabase SDK's `storage` APIs and normalizes several possible response shapes.
-- The working script you provided earlier used `create_client(SUPABASE_URL, SUPABASE_KEY)` and then `supabase.storage.from_(BUCKET).list(UID, options)` and `download(...)` on a user-scoped client. The current class mimics that but builds a `user_client` with the user's access token. Different `supabase` library versions return different shapes for `list` and `download` results. The code tries to support both tuple/dict/object patterns. If you get unexpected responses, print the raw `auth_response` or `raw_list` to inspect their shape.
-- Bucket names with spaces are supported; the SDK handles encoding. Avoid manual URL building for storage operations.
-
-### Document loading and parsing
-Functions:
-- `_iter_paths` — yields file paths (supports directories recursively).
-- `_load_one` — loads a single file based on suffix: PDF, txt, docx, csv/tsv, doc (word), or falls back to UnstructuredFileLoader for other types.
-- `load_csv` — special CSV reading logic. It can create a `Document` per row or group rows into documents depending on `CSV_ROWS_PER_DOC`.
-- `load_documents` — loads all files from `DATA_PATHS`.
-
-Notes:
-- For large CSVs, `CSV_READ_CHUNKSIZE` controls pandas chunked reading.
-- Each returned `Document` has `page_content` and `metadata["source"]`.
-- Some loaders rely on unstructured or other libraries that may have platform-specific dependencies.
-
-### Token counting and chunking
-- `_get_token_counter(model_hint)` uses `tiktoken` if available to estimate token counts. If `tiktoken` is unavailable, it falls back to a rough word-count approach.
-- `chunk_docs` uses `RecursiveCharacterTextSplitter` with `chunk_size` and `chunk_overlap`. The `length_function` passed uses the token counter.
-- This chunking is critical before building FAISS. If the tokens returned by the tokenizer differ from the model's expectations, tune `CHUNK_TOKENS`.
-
-### Embeddings and FAISS
-- `get_embeddings(model_name)` builds a `HuggingFaceEmbeddings` instance. It currently sets `device: cpu`. You can change `model_kwargs` to use GPU if available.
-- `build_faiss(docs, embedder, persist_dir)` builds and saves a FAISS vectorstore.
-- `load_faiss(embedder, persist_dir)` loads a saved FAISS store; it returns None on failure.
-
-Behavior:
-- `ensure_vectorstore` either loads an existing index or builds a new one from documents in `DATA_PATHS`. It prints progress messages. It raises `RuntimeError` if no documents were loaded and rebuild is requested.
-
-### Model loading and chain construction
-- `resolve_model_path(model_name)` downloads or resolves a GGUF file from the Hugging Face hub using `hf_hub_download` and a small `MODELS` mapping.
-- `load_chat_model` constructs a `ChatLlamaCpp` instance with model path and runtime parameters.
-- `build_rag_chain` composes:
-  - A retriever from FAISS (`vectorstore.as_retriever(search_kwargs={"k": k})`)
-  - A `ChatPromptTemplate` with `system` and `human` messages
-  - A runnable chain: context composition followed by `prompt` then `llm` then `StrOutputParser()`
-
-Notes:
-- The system prompt string inside `build_rag_chain` is long and instructive. You can replace `DEFAULT_SYSTEM_PROMPT` in `CONFIG` if you need a different base behavior.
-- The chain is built only when `self.vs` exists. If no vectorstore is available, `self.chain` is None and `ask()` raises an error.
-
-### Prompt guard
-- If `PROMPT_GUARD_ENABLED` is true and a `PROMPT_GUARD_MODEL` is configured, `PromptGuard(...)` is initialized.
-- `ask()` runs guard checks on the user question and (optionally) on retrieved docs before invoking the chain.
-- If the guard flags the input as malicious, the request is blocked and a short refusal message is returned.
-
-Notes:
-- `PromptGuard` is an external dependency; inspect its API and model requirements if you need to update behavior.
-- The code prints guard labels and probabilities for debugging.
-
-### PII redaction
-- `redact_text` runs three canonical redactions:
-  - Mask long digit sequences (likely credit cards), keeping last 4 digits.
-  - Replace SSN patterns with `***-**-****`.
-  - Obfuscate email local part to show first character then stars.
-- `sanitize_metadata` ensures metadata keys are safe and lengths are bounded.
-- If `REDACT_PII` is enabled, `ask()` applies `redact_output`.
+Benchmark results are written to the project-root results tree:
+```
+results/employee-facing/<model>/<protected|unprotected>/<prompt_stem>.csv
+```
 
 ---
 
-## Runtime flow (end-to-end)
+## Running standalone
 
-1. Script starts. `CONFIG` is loaded (reads environment variables).
-2. `app = RAGApp(CONFIG)` creates the app and constructs `SupabaseSession`.
-3. `app.login(email, pwd)` authenticates with Supabase and creates a user-scoped client.
-4. `app.download_user_files(None, dest_dir="downloads")`:
-   - If `filenames` is None, call `sb.list_objects(bucket, prefix=user_prefix)` to enumerate user files.
-   - Build full object paths and call `sb.download_objects_to_dir`.
-   - Save files to `downloads`.
-5. If any files were downloaded, set `CONFIG['REBUILD_INDEX'] = True` and call `app.setup()`:
-   - `setup()` ensures directories exist, then calls `ensure_vectorstore`. If REBUILD is true or no index exists, it builds FAISS with the specified embedding model.
-   - It loads the chat LLM regardless, and then builds the RAG chain if the vectorstore exists.
-   - It also initializes the prompt guard if enabled.
+```bash
+cd src/employee-facing
+python main.py
+```
 
-6. After setup, use `app.ask(question)` to:
-   - Optionally run the prompt guard against the question.
-   - If the user is authenticated and the question looks like it needs DB context (seen via `should_fetch_db()`), call `sb.query_user_transactions()` and format the DB rows for the chain.
-   - Optionally check retrieved docs with the prompt guard.
-   - Invoke the chain runnable with `input` and `db_context`.
-   - Optionally redact the output.
+This runs every system prompt in `docs/system_prompts/` against all attack prompts in `src/shared/attack_prompt.txt`, unprotected, using Meta-Llama-3.1-8B-Instruct. Results are written to:
+```
+results/employee-facing/Meta-Llama-3.1-8B-Instruct/unprotected/
+```
+
+To run all 8 configurations (both models, both guard modes) use the master benchmark:
+```bash
+cd <project-root>
+python main.py
+```
 
 ---
 
-## Debugging tips and common failure modes
+## Configuration
 
-1. Bucket not found error
-   - If you see `Bucket not found` with HTTP 404, check `SUPABASE_BUCKET` value and its permissions.
-   - Use the supabase-py SDK directly in a small REPL to confirm `storage.from_(BUCKET).list()` behavior and return shape. The SDK handles encoding and paths; constructing raw URLs often leads to mistakes.
+Key flags in `rag.py → CONFIG`:
 
-2. SDK response shapes
-   - Different versions of `supabase` return `list()` results as `(data, error)` tuple, or as a dict with `data` key, or as a plain list. The code attempts to normalize each case, but if you get errors, print the raw return value (e.g., `print(raw_list)`).
-
-3. Authentication
-   - `auth_response` shape varies by SDK version. If `user` or `session` are missing, print `auth_response` to inspect. You may need a more explicit extraction depending on lib version.
-   - Token scopes: when creating the user-scoped client with `create_client(SUPABASE_URL, ACCESS_TOKEN)`, some setups expect that token to be passed differently. If downloads fail due to permission, the token may not be valid for storage. Try using the SDK pattern from the working script: authenticate through `supabase.auth.sign_in_with_password` and then reuse the returned client object for storage calls.
-
-4. Model and LLM loading
-   - `hf_hub_download` writes local model files. Ensure sufficient disk space and correct repo_id/filename in `MODELS`.
-   - `ChatLlamaCpp` may require specific runtime dependencies (ggml, llama.cpp binding). Confirm those binaries are installed and match the model file format.
-
-5. FAISS and embeddings
-   - FAISS requires compiled binaries. If `FAISS.from_documents` fails, inspect binary compatibility or install a CPU-only wheel.
-   - Embedding model memory: embedding models can be large. `HuggingFaceEmbeddings` currently sets `device: cpu`. To speed up embedding you can enable GPU if your environment supports it.
-
-6. Token counting and chunk sizes
-   - If retrieval quality is poor because chunks are too big or small, adjust `CHUNK_TOKENS` and `CHUNK_TOKEN_OVERLAP`. Use `_get_token_counter` with `tiktoken` if available to match model tokens.
-
-7. Prompt guard false positives
-   - If legitimate questions are blocked, examine the guard model output and lower the threshold or disable `PROMPT_GUARD_CHECK_RETRIEVED_DOCS`.
+| Key | Default | Description |
+|-----|---------|-------------|
+| `DATA_PATHS` | `["./downloads"]` | Directories scanned for source documents |
+| `SKIP_FILENAMES` | `["attack_prompt.txt"]` | Filenames excluded from RAG indexing |
+| `REBUILD_INDEX` | `True` | Force a fresh FAISS build (default True because downloads change) |
+| `LLM_NAME` | `"Qwen3-8B"` | `"Qwen3-8B"` or `"Meta-Llama-3.1-8B-Instruct"` |
+| `PROMPT_GUARD_ENABLED` | `True` | Toggle Llama Prompt Guard input screening |
+| `PROMPT_GUARD_THRESHOLD` | `0.6` | Malicious-probability cutoff (0–1) |
+| `REDACT_PII` | `False` | Mask credit cards, SSNs, and emails in output |
+| `Bucket_Name` | `"Company files"` | Supabase Storage bucket for file downloads |
+| `SUPABASE_ANON_KEY` | env | Used as `apikey` in user-scoped REST calls |
 
 ---
 
-## Security and privacy notes
+## Runtime flow
 
-- `SUPABASE_KEY` is sensitive. Avoid embedding service-role keys in public repos. Use environment variables and a secrets manager.
-- `REDACT_PII` is off by default. If your data contains PII, enable it, but test to ensure it redacts fields you expect.
-- The code downloads user files to a local `downloads` folder. Ensure proper file permissions and consider encrypting disk if sensitive.
-- Prompt guard model and LLMs should not be exposed to untrusted users if they can change system prompts.
+1. `app.login()` authenticates via `admin_client.auth.sign_in_with_password()` (Supabase SDK).
+   - Stores `user_id` and `access_token`.
+   - Creates a `user_client` scoped to the user's access token for storage operations.
+2. `app.download_user_files()` lists and downloads files from the user's prefix in Supabase Storage.
+   - Object paths are preserved as relative sub-paths to avoid filename collisions.
+   - Files land in `downloads/`.
+3. `app.setup()`:
+   - Creates the `downloads/` directory if missing.
+   - Loads or builds the FAISS index from `DATA_PATHS`.
+   - Downloads the LLM and initialises the Prompt Guard.
+4. Each question sent to `app.ask()`:
+   - Prompt Guard screens the input; if it fails, a refusal is returned immediately (fail-closed).
+   - FAISS retrieves the top-k relevant document chunks.
+   - If the question matches financial keywords, the user's `renter_transactions` rows are fetched.
+   - The LLM generates a response from the retrieved context.
+   - If `REDACT_PII` is enabled, the output is sanitised before returning.
+5. Results are appended to the CSV log.
 
 ---
 
-## Quick reference — important function signatures
+## Security features
 
-- SupabaseSession.login(email: str, password: str) -> bool
-- SupabaseSession.list_objects(bucket: str, prefix: str = "", limit: int = 1000) -> List[str]
-- SupabaseSession.download_objects_to_dir(bucket: str, object_paths: List[str], dest_dir: str) -> List[Tuple[str, bool, Optional[str]]]
-- load_documents(inputs: Iterable[str]) -> List[Document]
-- chunk_docs(docs: List[Document], chunk_tokens: Optional[int], chunk_overlap_tokens: Optional[int], model_hint: Optional[str]) -> List[Document]
-- ensure_vectorstore(data_paths: List[str], vs_dir: Path, rebuild: bool, embed_model_name: str) -> Tuple[FAISS, HuggingFaceEmbeddings]
-- load_chat_model(model_name: str, n_ctx: int, n_gpu_layers: int, temperature: float, max_tokens: int) -> ChatLlamaCpp
-- RAGApp.ask(question: str) -> str
+| Feature | Detail |
+|---------|--------|
+| Prompt Guard | Classifies input with `meta-llama/Llama-Prompt-Guard-2-22M`; blocks requests above threshold |
+| Fail-closed guard | Guard exceptions return an error to the user instead of falling through |
+| PII redaction | Masks credit card numbers (last 4 shown), SSNs, and email local parts |
+| Supabase RLS | `query_user_transactions` filters by `user_id=eq.<authenticated_user>` |
+| Anon key separation | User REST calls use `SUPABASE_ANON_KEY` as `apikey`; service key is not sent to the client |
+| User-scoped storage | File downloads use `user_client` (scoped to user JWT), not the admin client |
+| Email sanitisation | User email is validated by regex before injection into the system prompt |
+| Document filtering | `SKIP_FILENAMES` prevents benchmark infrastructure files from being indexed |
+| Path collision fix | Downloads preserve full relative paths so files with the same name in different folders do not overwrite each other |
+
+---
+
+## Supabase session internals
+
+`SupabaseSession` holds two clients:
+
+| Client | Key used | Purpose |
+|--------|----------|---------|
+| `admin_client` | `SUPABASE_KEY` (service role) | Authentication only (`sign_in_with_password`) |
+| `user_client` | User access token | Storage listing and downloads |
+
+REST queries (`query_user_transactions`) use the user's access token as `Authorization: Bearer` and `SUPABASE_ANON_KEY` as `apikey`, keeping the service role key off the wire for user-scoped operations.
+
+---
+
+## Differences from customer-facing
+
+| Feature | Employee-facing | Customer-facing |
+|---------|----------------|-----------------|
+| Supabase auth | Supabase Python SDK | Raw HTTP (`requests`) |
+| File downloads | `download_user_files()` via SDK | Not supported |
+| Default data path | `./downloads` | `./docs` |
+| Index rebuild default | `True` | `False` |
+| `tiktoken` import | Required (top-level import) | Optional (falls back) |
+
+---
+
+*See the top-level `README.md` for the master benchmark and full architecture overview.*

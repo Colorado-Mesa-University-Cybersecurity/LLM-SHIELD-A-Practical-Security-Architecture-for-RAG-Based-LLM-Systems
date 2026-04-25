@@ -90,8 +90,12 @@ class PromptGuard:
                     if self.debug:
                         print(f"[prompt_guard] Calibration: could not parse mal_best_raw={mal_best_raw}")
             else:
+                if self.id2label:
+                    for idx, label in self.id2label.items():
+                        if any(tok in str(label).upper() for tok in ("MALIC", "INJECT", "JAIL", "OVERRIDE")):
+                            self.malicious_indices.add(idx)
                 if self.debug:
-                    print("[prompt_guard] id2label not generic or not present; will resolve labels from id2label or raw strings.")
+                    print(f"[prompt_guard] id2label populated malicious_indices={self.malicious_indices}")
         except Exception as e:
             if self.debug:
                 print(f"[prompt_guard] Calibration failed: {e}")

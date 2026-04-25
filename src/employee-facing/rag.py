@@ -46,13 +46,14 @@ CONFIG: Dict[str, Any] = {
 
     "TOP_K": 5,
 
-    "SYSTEM_PROMPT": (),
+    "SYSTEM_PROMPT": "",
 
     "CHUNK_TOKENS": 512,
     "CHUNK_TOKEN_OVERLAP": 20,
 
     "SUPABASE_URL": os.getenv("SUPABASE_URL"),
     "SUPABASE_KEY": os.getenv("SUPABASE_KEY"),
+    "SUPABASE_ANON_KEY": os.getenv("SUPABASE_ANON_KEY"),
 
     "DB_LIMIT": 20,
     "Bucket_Name": os.getenv("SUPABASE_BUCKET") or "Company files",
@@ -61,6 +62,9 @@ CONFIG: Dict[str, Any] = {
 
     "CSV_ROWS_PER_DOC": 1,
     "CSV_READ_CHUNKSIZE": 512,
+
+    # Filenames (case-insensitive) to skip during document loading
+    "SKIP_FILENAMES": ["attack_prompt.txt"],
 
     "REDACT_PII": False,
 
@@ -206,7 +210,7 @@ def _load_one(path: Path) -> List[Document]:
         loader = PyPDFLoader(str(path))
         docs = loader.load()
     elif suffix == ".txt":
-        loader = TextLoader(str(path), autodetect_encoding=True)
+        loader = TextLoader(str(path), encoding="utf-8")
         docs = loader.load()
     elif suffix == ".docx":
         loader = Docx2txtLoader(str(path))
@@ -232,35 +236,35 @@ def _load_one(path: Path) -> List[Document]:
 
 def load_documents(inputs: Iterable[str]) -> List[Document]:
     docs: List[Document] = []
-    for path in _iter_paths(inputs):
+    skip = {fn.lower() for fn in CONFIG.get("SKIP_FILENAMES", [])}
+    for inp in list(inputs):
         try:
-            loaded = _load_one(path)
-            docs.extend(loaded)
-        except Exception as e:
-            print(f"[loader] Skipping {path}: {e}")
+            for path in _iter_paths([inp]):
+                if path.name.lower() in skip:
+                    print(f"[loader] Excluding {path.name}")
+                    continue
+                try:
+                    loaded = _load_one(path)
+                    docs.extend(loaded)
+                except Exception as e:
+                    print(f"[loader] Skipping {path}: {e}")
+        except FileNotFoundError as e:
+            print(f"[loader] Skipping missing path: {e}")
     return docs
 
 def _get_token_counter(model_hint: Optional[str] = None) -> Callable[[str], int]:
-    try:
-        def _tiktoken_count(s: str) -> int:
-            if not s:
-                return 0
-            try:
-                try:
-                    enc = tiktoken.encoding_for_model(model_hint) if model_hint else tiktoken.get_encoding("cl100k_base")
-                except Exception:
-                    enc = tiktoken.get_encoding("cl100k_base")
-                return len(enc.encode(s))
-            except Exception:
-                return len(s.split())
-        return _tiktoken_count
-    except ImportError:
-        pass
-    def _fallback_count(s: str) -> int:
+    def _tiktoken_count(s: str) -> int:
         if not s:
             return 0
-        return len(re.findall(r"\S+", s))
-    return _fallback_count
+        try:
+            try:
+                enc = tiktoken.encoding_for_model(model_hint) if model_hint else tiktoken.get_encoding("cl100k_base")
+            except Exception:
+                enc = tiktoken.get_encoding("cl100k_base")
+            return len(enc.encode(s))
+        except Exception:
+            return len(s.split())
+    return _tiktoken_count
 
 def chunk_docs(docs: List[Document], chunk_tokens: Optional[int] = None, chunk_overlap_tokens: Optional[int] = None,
                model_hint: Optional[str] = None) -> List[Document]:
@@ -321,7 +325,7 @@ def ensure_vectorstore(
     model_hint = embed_model_name or CONFIG.get("LLM_NAME")
     chunks = chunk_docs(docs,
                         chunk_tokens=int(CONFIG.get("CHUNK_TOKENS", 512)),
-                        chunk_overlap_tokens=int(CONFIG.get("CHUNK_TOKEN_OVERLAP", 128)),
+                        chunk_overlap_tokens=int(CONFIG.get("CHUNK_TOKEN_OVERLAP", 20)),
                         model_hint=model_hint)
     print(f"[index] Created {len(chunks)} chunks.")
     print(f"[index] Building FAISS at {vs_dir} ...")
@@ -416,7 +420,7 @@ def should_fetch_db(question: str) -> bool:
         "my payments", "my charges", "last transactions", "recent transactions",
         "account holder", "bank", "account type", "account mask", "routing",
         "card", "card brand", "card last4", "credit score", "annual income",
-        "check", "check number", "check date", "check payee", "check amount", "check memo", "credit card amount",
+        "check number", "check date", "check payee", "check amount", "check memo", "credit card amount",
     ]
     return any(k in q for k in keywords)
 
@@ -424,6 +428,7 @@ def should_fetch_db(question: str) -> bool:
 class SupabaseSession:
     supabase_url: str
     supabase_key: str
+    supabase_anon_key: Optional[str] = None
     user_id: Optional[str] = None
     access_token: Optional[str] = None
     email: Optional[str] = None
@@ -435,7 +440,8 @@ class SupabaseSession:
     def from_config(cls, cfg: Dict[str, Any]) -> "SupabaseSession":
         url = cfg.get("SUPABASE_URL") or os.getenv("SUPABASE_URL", "")
         key = cfg.get("SUPABASE_KEY") or os.getenv("SUPABASE_KEY", "")
-        inst = cls(supabase_url=url, supabase_key=key)
+        anon_key = cfg.get("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_ANON_KEY")
+        inst = cls(supabase_url=url, supabase_key=key, supabase_anon_key=anon_key)
         try:
             if url and key:
                 inst.admin_client = create_client(url, key)
@@ -516,7 +522,8 @@ class SupabaseSession:
         self.user_client = None
 
     def _auth_headers(self) -> Dict[str, str]:
-        return {"apikey": self.supabase_key, "Authorization": f"Bearer {self.access_token}"}
+        api_key = self.supabase_anon_key or self.supabase_key
+        return {"apikey": api_key, "Authorization": f"Bearer {self.access_token}"}
 
     def query_user_transactions(self, limit: int = 20) -> List[Dict[str, Any]]:
         if not self.is_authenticated():
@@ -590,8 +597,9 @@ class SupabaseSession:
                 results.append((path, False, self.last_error))
                 continue
             try:
-                filename = os.path.basename(path)
-                out_path = os.path.join(dest_dir, filename)
+                rel_path = path.lstrip("/").replace("/", os.sep)
+                out_path = os.path.join(dest_dir, rel_path)
+                os.makedirs(os.path.dirname(out_path), exist_ok=True)
                 with open(out_path, "wb") as f:
                     f.write(content)
                 results.append((path, True, None))
@@ -658,8 +666,7 @@ class RAGApp:
     def setup(self) -> None:
         # Ensure downloads dir exists (DATA_PATHS defaults to ./downloads)
         for p in self.cfg.get("DATA_PATHS", []):
-            if p.startswith("./") or p.startswith("/") or p == "downloads":
-                os.makedirs(p, exist_ok=True)
+            os.makedirs(p, exist_ok=True)
 
         vs_dir = Path(self.cfg["VS_DIR"]).resolve()
 
@@ -769,8 +776,8 @@ class RAGApp:
                 q_res = self.prompt_guard.check_text(question)
             except Exception as e:
                 print(f"[guard] Error running prompt guard on question: {e}")
-                q_res = {"is_malicious": False, "malicious_prob": 0.0, "label": "BENIGN", "per_chunk": []}
-            if Verbose := self.cfg.get("Verbose", True):
+                return "We couldn't process your request due to an internal error. Please try again or contact support."
+            if self.cfg.get("Verbose", True):
                 label = q_res.get("label", "UNKNOWN")
                 prob = float(q_res.get("malicious_prob", 0.0))
                 is_mal = bool(q_res.get("is_malicious", False))
