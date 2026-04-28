@@ -215,6 +215,8 @@ def run_one_config(
             "PROMPT_GUARD_ENABLED":              cfg.protected,
             "PROMPT_GUARD_CHECK_RETRIEVED_DOCS": cfg.protected,
             "REDACT_PII":                        cfg.protected,
+            # Lower threshold for protected configs to reduce false negatives
+            **({"PROMPT_GUARD_THRESHOLD": 0.4} if cfg.protected else {}),
         }
 
         log_path = log_dir / f"{Path(prompt_fname).stem}.csv"
