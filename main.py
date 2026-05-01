@@ -151,6 +151,21 @@ def run_one_config(
 ) -> None:
     guard_label = "protected" if cfg.protected else "unprotected"
     log_dir = RESULTS_ROOT / cfg.side_name / cfg.model_name / guard_label
+
+    existing_csvs = sorted(log_dir.glob("*.csv")) if log_dir.exists() else []
+    if existing_csvs:
+        print(f"\n  [!] Results already exist in {log_dir.relative_to(ROOT_DIR)}")
+        print(f"      {len(existing_csvs)} file(s): {', '.join(f.name for f in existing_csvs)}")
+        try:
+            answer = input("      Override? [y/N] ").strip().lower()
+        except EOFError:
+            answer = ""
+        if answer not in ("y", "yes"):
+            print("      Skipping.")
+            return
+        for f in existing_csvs:
+            f.unlink()
+
     log_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"\n{'='*72}")
