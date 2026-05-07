@@ -68,7 +68,7 @@ CONFIG: Dict[str, Any] = {
 
     "Verbose": True,
     "PROMPT_GUARD_ENABLED": True,
-    "PROMPT_GUARD_MODEL": "meta-llama/Llama-Prompt-Guard-2-22M",
+    "PROMPT_GUARD_MODEL": "meta-llama/Llama-Prompt-Guard-2-86M",
     "PROMPT_GUARD_THRESHOLD": 0.6,
     "PROMPT_GUARD_CHECK_RETRIEVED_DOCS": False,
 }
@@ -712,7 +712,10 @@ class RAGApp:
             try:
                 self.prompt_guard = PromptGuard(
                     model_id=self.cfg.get("PROMPT_GUARD_MODEL"),
-                    threshold=float(self.cfg.get("PROMPT_GUARD_THRESHOLD", 0.6)),
+                    threshold=float(self.cfg.get("PROMPT_GUARD_THRESHOLD", 0.5)),
+                    max_tokens=int(self.cfg.get("PROMPT_GUARD_MAX_TOKENS", 512)),
+                    chunk_overlap=int(self.cfg.get("PROMPT_GUARD_CHUNK_OVERLAP", 50)),
+                    temperature=float(self.cfg.get("PROMPT_GUARD_TEMPERATURE", 1.0)),
                 )
                 print(f"[security] Prompt Guard loaded: {self.cfg.get('PROMPT_GUARD_MODEL')}")
             except Exception as e:
@@ -809,6 +812,13 @@ class RAGApp:
 
         chain_inputs = {"input": question, "db_context": db_context}
         raw_answer = self.chain.invoke(chain_inputs)
+
+        # Strip Qwen3 chain-of-thought blocks before returning or redacting.
+        # <think>...</think> contains internal reasoning that must not be
+        # surfaced to callers or stored in result CSVs.
+        if "qwen" in self.cfg.get("LLM_NAME", "").lower():
+            raw_answer = re.sub(r"<think>.*?</think>", "", raw_answer, flags=re.S | re.I).strip()
+
         if self.cfg.get("REDACT_PII"):
             user_answer = redact_output(raw_answer)
         else:

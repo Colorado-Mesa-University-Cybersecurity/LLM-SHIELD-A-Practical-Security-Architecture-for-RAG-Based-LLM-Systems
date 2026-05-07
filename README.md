@@ -206,6 +206,9 @@ SUPABASE_EMAIL=user@example.com       # test account
 SUPABASE_PASSWORD=yourpassword
 ```
 
+If you do not set the `BENCHMARK_*` variables, the runner uses the repository's
+current layout (`src/` and `results/`) exactly as before.
+
 ---
 
 ## Dependencies
