@@ -188,6 +188,17 @@ def read_attack_prompts(path: Path) -> List[str]:
     return lines
 
 
+def read_benign_prompts(path: Path) -> List[str]:
+    prompts = []
+    with path.open(encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            p = (row.get("prompt") or "").strip()
+            if p:
+                prompts.append(p)
+    return prompts
+
+
 def ensure_csv_header(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
@@ -216,6 +227,7 @@ def append_csv(
 def run_one_config(
     cfg: Config,
     attack_prompts: List[str],
+    benign_prompts: List[str],
     first_run_for_side: bool,
 ) -> None:
     dir_label = _result_dir_label(cfg)
@@ -295,7 +307,7 @@ def run_one_config(
             "REBUILD_INDEX": should_rebuild,
             "Verbose":      False,
             "SKIP_FILENAMES": [
-                "attack_prompt.txt", "malicious prompt.txt",
+                "attack_prompt.txt", "malicious prompt.txt", "benignPrompts.txt",
                 "100_prompt.txt", "500_prompt.txt",
                 "1000_prompt.txt", "1500_prompt.txt",
             ],
@@ -308,6 +320,8 @@ def run_one_config(
             "PROMPT_GUARD_MAX_TOKENS":   gc["max_tokens"]    if gc else 512,
             "PROMPT_GUARD_CHUNK_OVERLAP": gc["chunk_overlap"] if gc else 50,
             "PROMPT_GUARD_TEMPERATURE":  gc["temperature"]   if gc else 1.0,
+            # Protected runs only need enough tokens to detect block vs. pass-through
+            **({"MAX_NEW_TOKENS": 150} if cfg.protected else {}),
         }
 
         log_path = log_dir / f"{Path(prompt_fname).stem}.csv"
@@ -326,7 +340,9 @@ def run_one_config(
             continue
 
         ok_count = fail_count = 0
-        for q in attack_prompts:
+        total = len(attack_prompts)
+        for i, q in enumerate(attack_prompts, 1):
+            print(f"  [{stem_label}] prompt {i}/{total} ...", end="\r", flush=True)
             start = time.perf_counter()
             try:
                 resp = app.ask(q)
@@ -337,11 +353,28 @@ def run_one_config(
                 ok_count += 1
             duration = time.perf_counter() - start
             append_csv(log_path, prompt_fname, q, resp, duration)
+        print()
 
         print(
             f"    complete — {ok_count} answered, {fail_count} errors, "
             f"{ok_count + fail_count} total prompts"
         )
+
+        if cfg.protected and benign_prompts:
+            benign_log_path = log_dir / f"benign_{Path(prompt_fname).stem}.csv"
+            ensure_csv_header(benign_log_path)
+            benign_total = len(benign_prompts)
+            for j, q in enumerate(benign_prompts, 1):
+                print(f"  [{stem_label}] benign {j}/{benign_total} ...", end="\r", flush=True)
+                start = time.perf_counter()
+                try:
+                    resp = app.ask(q)
+                except Exception as e:
+                    resp = f"ERROR: {e}"
+                duration = time.perf_counter() - start
+                append_csv(benign_log_path, prompt_fname, q, resp, duration)
+            print()
+            print(f"    benign — {benign_total} prompts logged to {_display_path(benign_log_path)}")
 
 
 # ── Guardrail analysis ────────────────────────────────────────────────────────
@@ -394,6 +427,9 @@ def main() -> None:
 
     attack_prompts = read_attack_prompts(attack_prompts_path)
 
+    benign_prompts_path = SHARED_DIR / "benignPrompts.txt"
+    benign_prompts = read_benign_prompts(benign_prompts_path) if benign_prompts_path.exists() else []
+
     n_unprotected = sum(1 for c in CONFIGS if not c.protected)
     n_protected   = sum(1 for c in CONFIGS if c.protected)
 
@@ -401,6 +437,7 @@ def main() -> None:
     print("  Master Benchmark — Guard Config Sweep")
     print("=" * 72)
     print(f"  Attack prompts : {len(attack_prompts)}")
+    print(f"  Benign prompts : {len(benign_prompts)}")
     print(f"  System prompts : {len(SYSTEM_PROMPT_FILES)}")
     print(f"  Guard configs  : {len(GUARD_CONFIGS)}")
     print(f"  Total configs  : {len(CONFIGS)}  "
@@ -426,7 +463,7 @@ def main() -> None:
             f"{cfg.side_name} | {cfg.model_name} | {dir_label}"
         )
         try:
-            run_one_config(cfg, attack_prompts, first_run_for_side=first_run)
+            run_one_config(cfg, attack_prompts, benign_prompts, first_run_for_side=first_run)
         except Exception as e:
             print(f"  [fatal] Configuration {i} failed: {e}")
 

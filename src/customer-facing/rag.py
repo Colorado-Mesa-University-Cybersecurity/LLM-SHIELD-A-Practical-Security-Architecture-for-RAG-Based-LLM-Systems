@@ -38,6 +38,7 @@ CONFIG: Dict[str, Any] = {
     "GPU_OFFLOAD": True,
     "CTX_TOKENS": 8192,
     "MAX_NEW_TOKENS": 1024,
+    "N_BATCH": 512,
     "TEMPERATURE": 0.2,
 
     "TOP_K": 5,
@@ -417,6 +418,7 @@ def load_chat_model(
         n_gpu_layers: int = 0,
         temperature: float = 0.2,
         max_tokens: int = 1024,
+        n_batch: int = 512,
         verbose: bool = False,
 ) -> ChatLlamaCpp:
     model_path = resolve_model_path(model_name)
@@ -426,6 +428,7 @@ def load_chat_model(
         n_gpu_layers=n_gpu_layers,
         temperature=temperature,
         max_tokens=max_tokens,
+        n_batch=n_batch,
         verbose=verbose,
     )
     return llm
@@ -668,6 +671,7 @@ class RAGApp:
             n_gpu_layers=n_gpu_layers,
             temperature=self.cfg["TEMPERATURE"],
             max_tokens=self.cfg["MAX_NEW_TOKENS"],
+            n_batch=self.cfg.get("N_BATCH", 512),
         )
 
         self.chain = build_rag_chain(

@@ -207,8 +207,30 @@ def build_guardrail_reports(
                 "positive_count": str(positive),
                 "total_questions": str(total),
                 "percentage": f"{pct:.2f}%",
+                "false_positive_count": "0",
+                "total_benign": "0",
+                "false_positive_rate": "0.00%",
             }
         )
+
+    # Collect false positives from benign_*.csv files
+    benign_paths = sorted(prompts_path.glob("benign_*.csv"), key=lambda p: p.name)
+    for bp in benign_paths:
+        benign_stem = bp.stem[len("benign_"):]  # strip "benign_" prefix
+        prompt_id = _extract_prompt_id(benign_stem)
+        df_b = pd.read_csv(bp, dtype=str).fillna("")
+        total_b = len(df_b.index)
+        fp_count = sum(
+            1 for _, row in df_b.iterrows()
+            if normalize_text(str(row.get("response", ""))) == target_norm
+        )
+        fp_rate = (fp_count / total_b * 100.0) if total_b else 0.0
+        for r in summary_rows:
+            if str(r["system_prompt_file"]) == str(prompt_id):
+                r["false_positive_count"] = str(fp_count)
+                r["total_benign"] = str(total_b)
+                r["false_positive_rate"] = f"{fp_rate:.2f}%"
+                break
 
     if expected_prompt_ids:
         known = {str(r["system_prompt_file"]) for r in summary_rows}
@@ -220,6 +242,9 @@ def build_guardrail_reports(
                         "positive_count": "0",
                         "total_questions": "0",
                         "percentage": "0.00%",
+                        "false_positive_count": "0",
+                        "total_benign": "0",
+                        "false_positive_rate": "0.00%",
                     }
                 )
 
@@ -231,7 +256,10 @@ def build_guardrail_reports(
 
     summary_df = pd.DataFrame(
         summary_rows,
-        columns=["system_prompt_file", "positive_count", "total_questions", "percentage"],
+        columns=[
+            "system_prompt_file", "positive_count", "total_questions", "percentage",
+            "false_positive_count", "total_benign", "false_positive_rate",
+        ],
     )
     failures_df = pd.DataFrame(
         failure_rows,
