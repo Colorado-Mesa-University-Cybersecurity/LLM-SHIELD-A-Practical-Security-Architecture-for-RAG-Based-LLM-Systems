@@ -10,22 +10,18 @@ This repository implements a secure Retrieval-Augmented Generation (RAG) archite
 
 ```
 Specialized-AI-Agents/
-├── main.py                    — master benchmark runner (all 8 configurations)
+├── main.py                    — master benchmark runner (all 52 configurations)
 ├── results/                   — all benchmark output CSVs
 │   ├── customer-facing/
 │   │   ├── Qwen3-8B/
-│   │   │   ├── protected/
-│   │   │   └── unprotected/
+│   │   │   ├── unprotected/
+│   │   │   ├── protected_c512_temp1.0_th0.40/
+│   │   │   ├── protected_c128_ov100_temp2.0_th0.40/
+│   │   │   └── ... (one directory per guard config)
 │   │   └── Meta-Llama-3.1-8B-Instruct/
-│   │       ├── protected/
-│   │       └── unprotected/
+│   │       └── ...
 │   └── employee-facing/
-│       ├── Qwen3-8B/
-│       │   ├── protected/
-│       │   └── unprotected/
-│       └── Meta-Llama-3.1-8B-Instruct/
-│           ├── protected/
-│           └── unprotected/
+│       └── ...
 └── src/
     ├── shared/
     │   ├── prompt_guard.py        — PromptGuard implementation (shared)
@@ -75,34 +71,55 @@ Internal staff query company documents with broader access and Supabase Storage 
 python main.py
 ```
 
-Runs **8 configurations** — both environments × both models × protected/unprotected:
+Runs **52 configurations** — both environments × both models × 1 unprotected + 12 guard configs:
 
-| # | Side | Model | Mode |
-|---|------|-------|------|
-| 1 | customer-facing | Qwen3-8B | protected |
-| 2 | customer-facing | Qwen3-8B | unprotected |
-| 3 | customer-facing | Meta-Llama-3.1-8B-Instruct | protected |
-| 4 | customer-facing | Meta-Llama-3.1-8B-Instruct | unprotected |
-| 5 | employee-facing | Qwen3-8B | protected |
-| 6 | employee-facing | Qwen3-8B | unprotected |
-| 7 | employee-facing | Meta-Llama-3.1-8B-Instruct | protected |
-| 8 | employee-facing | Meta-Llama-3.1-8B-Instruct | unprotected |
+| Axis | Values |
+|------|--------|
+| Side | `customer-facing`, `employee-facing` |
+| Model | `Qwen3-8B`, `Meta-Llama-3.1-8B-Instruct` |
+| Mode | `unprotected` (×1), `protected_<name>` (×12 guard configs) |
 
 Each configuration runs all four system prompt variants (`100_prompt`, `500_prompt`, `1000_prompt`, `1500_prompt`) against every attack prompt in `src/shared/attack_prompt.txt`.
 
-CSV output per prompt file: `results/<side>/<model>/<protected|unprotected>/<prompt_stem>.csv`
+CSV output per prompt file: `results/<side>/<model>/<mode>/<prompt_stem>.csv`
 
 Columns: `system_prompt_file, question, response, duration_seconds`
 
-After all 8 configurations complete, `guardrail_analysis.py` automatically scans each `protected/` results directory and writes:
+After all 52 configurations complete, `guardrail_analysis.py` automatically scans each `protected_*/` results directory and writes:
 - `guardrail_summary.csv` — block rate per system prompt length
 - `guardrail_failures.csv` — every prompt that was not blocked
 
 ---
 
-## Protected vs unprotected
+## Guard config sweep
 
-The benchmark flag `protected` controls all three security layers simultaneously:
+The benchmark sweeps 12 named guard configurations across three axes:
+
+| Name | Chunk tokens | Overlap | Temperature | Threshold |
+|------|-------------|---------|-------------|-----------|
+| `c512_temp1.0_th0.40` | 512 | 50 | 1.0 | 0.40 |
+| `c512_temp2.0_th0.40` | 512 | 50 | 2.0 | 0.40 |
+| `c512_temp3.0_th0.40` | 512 | 50 | 3.0 | 0.40 |
+| `c128_ov100_temp1.0_th0.40` | 128 | 100 | 1.0 | 0.40 |
+| `c128_ov100_temp1.5_th0.40` | 128 | 100 | 1.5 | 0.40 |
+| `c128_ov100_temp2.0_th0.40` | 128 | 100 | 2.0 | 0.40 |
+| `c128_ov100_temp3.0_th0.40` | 128 | 100 | 3.0 | 0.40 |
+| `c128_ov100_temp5.0_th0.40` | 128 | 100 | 5.0 | 0.40 |
+| `c128_ov100_temp3.0_th0.50` | 128 | 100 | 3.0 | 0.50 |
+| `c128_ov100_temp5.0_th0.50` | 128 | 100 | 5.0 | 0.50 |
+| `c64_ov50_temp3.0_th0.40` | 64 | 50 | 3.0 | 0.40 |
+| `c64_ov50_temp5.0_th0.40` | 64 | 50 | 5.0 | 0.40 |
+
+**Chunk tokens** — maximum tokens per input chunk fed to Prompt Guard.  
+**Overlap** — token overlap between adjacent chunks (catches attacks that span chunk boundaries).  
+**Temperature** — softmax temperature applied to Prompt Guard logits; higher values push borderline-scoring inputs above the block threshold.  
+**Threshold** — minimum malicious-probability score to block a request.
+
+Each protected run produces its own results directory: `protected_<name>/`.
+
+---
+
+## Protected vs unprotected
 
 | Flag | Protected | Unprotected |
 |------|-----------|-------------|
@@ -145,7 +162,10 @@ Key flags in `rag.py → CONFIG` (overridden per run by `main.py`):
 | `REBUILD_INDEX` | `False` | `True` | Force a fresh FAISS build |
 | `LLM_NAME` | `"Qwen3-8B"` | `"Qwen3-8B"` | `"Qwen3-8B"` or `"Meta-Llama-3.1-8B-Instruct"` |
 | `PROMPT_GUARD_ENABLED` | `True` | `True` | Toggle Llama Prompt Guard input screening |
-| `PROMPT_GUARD_THRESHOLD` | `0.6` | `0.6` | Malicious-probability cutoff (0–1) |
+| `PROMPT_GUARD_THRESHOLD` | `0.40` | `0.40` | Malicious-probability cutoff (0–1) |
+| `PROMPT_GUARD_MAX_TOKENS` | `512` | `512` | Max tokens per chunk fed to Prompt Guard |
+| `PROMPT_GUARD_CHUNK_OVERLAP` | `50` | `50` | Token overlap between adjacent chunks |
+| `PROMPT_GUARD_TEMPERATURE` | `1.0` | `1.0` | Softmax temperature applied to guard logits |
 | `REDACT_PII` | `False` | `False` | Mask credit cards, SSNs, and emails in output |
 | `SUPABASE_ANON_KEY` | env | env | Used as `apikey` in user-scoped REST calls |
 | `Bucket_Name` | — | `"Company files"` | Supabase Storage bucket (employee-facing only) |
@@ -206,8 +226,15 @@ SUPABASE_EMAIL=user@example.com       # test account
 SUPABASE_PASSWORD=yourpassword
 ```
 
-If you do not set the `BENCHMARK_*` variables, the runner uses the repository's
-current layout (`src/` and `results/`) exactly as before.
+Optional path overrides (default to the repository layout):
+
+```
+BENCHMARK_SRC_DIR=src
+BENCHMARK_SHARED_DIR=src/shared
+BENCHMARK_CUSTOMER_DIR=src/customer-facing
+BENCHMARK_EMPLOYEE_DIR=src/employee-facing
+BENCHMARK_RESULTS_DIR=results
+```
 
 ---
 
