@@ -707,6 +707,14 @@ class RAGApp:
         else:
             print("[security] PII redaction is DISABLED. Set CONFIG['REDACT_PII']=True to enable redaction.")
 
+    def rebuild_chain(self, system_prompt: str) -> None:
+        """Swap the system prompt without reloading the LLM or FAISS index."""
+        self.cfg["SYSTEM_PROMPT"] = system_prompt
+        if self.llm is not None and self.vs is not None:
+            self.chain = build_rag_chain(
+                self.llm, self.vs, system_prompt=system_prompt, k=self.cfg["TOP_K"]
+            )
+
     def login(self, email: str, password: str) -> bool:
         ok = self.sb.login(email, password)
         if not ok:

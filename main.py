@@ -280,7 +280,58 @@ def run_one_config(
         print(f"  [warn] No system prompt files found in {system_prompts_dir}, skipping.")
         return
 
-    index_rebuilt = False
+    user_email = base_cfg.get("TEST_EMAIL", "unknown@example.com")
+
+    # Read the first system prompt so the app can be initialised before the loop.
+    first_prompt_path = system_prompts_dir / available[0]
+    try:
+        first_prompt_content = first_prompt_path.read_text(encoding="utf-8").strip()
+    except Exception as e:
+        print(f"  [error] Cannot read first system prompt {first_prompt_path}: {e}")
+        return
+
+    # Build config once — LLM, FAISS, and PromptGuard are identical across all
+    # system-prompt variants in this config, so we only pay setup cost once.
+    run_cfg: Dict[str, Any] = {
+        **base_cfg,
+        "DATA_PATHS":   data_paths,
+        "VS_DIR":       vs_dir,
+        "SYSTEM_PROMPT": (
+            f"The current user's email: {_safe_email(user_email)}\n\n"
+            f"{first_prompt_content}"
+        ),
+        "LLM_NAME":     cfg.model_name,
+        "REBUILD_INDEX": first_run_for_side,
+        "Verbose":      False,
+        "SKIP_FILENAMES": [
+            "attack_prompt.txt", "malicious prompt.txt", "benignPrompts.txt",
+            "100_prompt.txt", "500_prompt.txt",
+            "1000_prompt.txt", "1500_prompt.txt",
+        ],
+        # Protection flags — all on for protected, all off for unprotected
+        "PROMPT_GUARD_ENABLED":              cfg.protected,
+        "PROMPT_GUARD_CHECK_RETRIEVED_DOCS": cfg.protected,
+        "REDACT_PII":                        cfg.protected,
+        # Guard tuning — sourced from the guard config entry for protected runs
+        "PROMPT_GUARD_THRESHOLD":    gc["threshold"]     if gc else 0.5,
+        "PROMPT_GUARD_MAX_TOKENS":   gc["max_tokens"]    if gc else 512,
+        "PROMPT_GUARD_CHUNK_OVERLAP": gc["chunk_overlap"] if gc else 50,
+        "PROMPT_GUARD_TEMPERATURE":  gc["temperature"]   if gc else 1.0,
+        # Protected runs only need enough tokens to detect block vs. pass-through
+        **({"MAX_NEW_TOKENS": 150} if cfg.protected else {}),
+    }
+
+    # Load LLM, FAISS, and PromptGuard once for all system-prompt variants.
+    try:
+        app = rag_mod.RAGApp(run_cfg)
+        app.setup()
+        app.login(run_cfg["TEST_EMAIL"], run_cfg["TEST_PASSWORD"])
+    except Exception as e:
+        print(f"  [error] Setup/login failed: {e}")
+        for fname in available:
+            lp = log_dir / f"{Path(fname).stem}.csv"
+            append_csv(lp, fname, "<setup>", f"ERROR: {e}", 0.0)
+        return
 
     for prompt_fname in available:
         prompt_path = system_prompts_dir / prompt_fname
@@ -290,54 +341,17 @@ def run_one_config(
             print(f"  [warn] Cannot read {prompt_path}: {e}")
             continue
 
-        user_email     = base_cfg.get("TEST_EMAIL", "unknown@example.com")
-        should_rebuild = first_run_for_side and not index_rebuilt
-        if should_rebuild:
-            index_rebuilt = True
-
-        run_cfg: Dict[str, Any] = {
-            **base_cfg,
-            "DATA_PATHS":   data_paths,
-            "VS_DIR":       vs_dir,
-            "SYSTEM_PROMPT": (
-                f"The current user's email: {_safe_email(user_email)}\n\n"
-                f"{system_prompt_content}"
-            ),
-            "LLM_NAME":     cfg.model_name,
-            "REBUILD_INDEX": should_rebuild,
-            "Verbose":      False,
-            "SKIP_FILENAMES": [
-                "attack_prompt.txt", "malicious prompt.txt", "benignPrompts.txt",
-                "100_prompt.txt", "500_prompt.txt",
-                "1000_prompt.txt", "1500_prompt.txt",
-            ],
-            # Protection flags — all on for protected, all off for unprotected
-            "PROMPT_GUARD_ENABLED":              cfg.protected,
-            "PROMPT_GUARD_CHECK_RETRIEVED_DOCS": cfg.protected,
-            "REDACT_PII":                        cfg.protected,
-            # Guard tuning — sourced from the guard config entry for protected runs
-            "PROMPT_GUARD_THRESHOLD":    gc["threshold"]     if gc else 0.5,
-            "PROMPT_GUARD_MAX_TOKENS":   gc["max_tokens"]    if gc else 512,
-            "PROMPT_GUARD_CHUNK_OVERLAP": gc["chunk_overlap"] if gc else 50,
-            "PROMPT_GUARD_TEMPERATURE":  gc["temperature"]   if gc else 1.0,
-            # Protected runs only need enough tokens to detect block vs. pass-through
-            **({"MAX_NEW_TOKENS": 150} if cfg.protected else {}),
-        }
+        # Swap the chain to use this prompt — no LLM or FAISS reload.
+        app.rebuild_chain(
+            f"The current user's email: {_safe_email(user_email)}\n\n"
+            f"{system_prompt_content}"
+        )
 
         log_path = log_dir / f"{Path(prompt_fname).stem}.csv"
         ensure_csv_header(log_path)
 
         stem_label = Path(prompt_fname).stem
         print(f"\n  [{stem_label}] writing to {_display_path(log_path)}")
-
-        try:
-            app = rag_mod.RAGApp(run_cfg)
-            app.setup()
-            app.login(run_cfg["TEST_EMAIL"], run_cfg["TEST_PASSWORD"])
-        except Exception as e:
-            print(f"  [error] Setup/login failed for {prompt_fname}: {e}")
-            append_csv(log_path, prompt_fname, "<setup>", f"ERROR: {e}", 0.0)
-            continue
 
         ok_count = fail_count = 0
         total = len(attack_prompts)
@@ -415,6 +429,37 @@ def run_guardrail_analysis() -> None:
             print(f"  [guardrail] Error analysing {d}: {e}")
 
 
+# ── Model prefetch ────────────────────────────────────────────────────────────
+
+def prefetch_models() -> None:
+    from huggingface_hub import hf_hub_download, snapshot_download
+
+    print(f"\n{'='*72}")
+    print("  Pre-downloading all models")
+    print(f"{'='*72}")
+
+    # Read specs from one rag module (both sides share the same MODELS/CONFIG)
+    cust_mod = load_rag_module(CUSTOMER_DIR)
+
+    for spec in cust_mod.MODELS:
+        print(f"  [fetch] {spec['repo_id']}/{spec['filename']}")
+        try:
+            hf_hub_download(repo_id=spec["repo_id"], filename=spec["filename"])
+        except Exception as e:
+            print(f"  [fetch] Warning: {e}")
+
+    for key, label in [("PROMPT_GUARD_MODEL", "Prompt Guard"), ("EMBED_MODEL", "Embedding model")]:
+        model_id = cust_mod.CONFIG.get(key)
+        if model_id:
+            print(f"  [fetch] {label}: {model_id}")
+            try:
+                snapshot_download(repo_id=model_id)
+            except Exception as e:
+                print(f"  [fetch] Warning: {e}")
+
+    print("  All models cached.\n")
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -429,6 +474,8 @@ def main() -> None:
 
     benign_prompts_path = SHARED_DIR / "benignPrompts.txt"
     benign_prompts = read_benign_prompts(benign_prompts_path) if benign_prompts_path.exists() else []
+
+    prefetch_models()
 
     n_unprotected = sum(1 for c in CONFIGS if not c.protected)
     n_protected   = sum(1 for c in CONFIGS if c.protected)
