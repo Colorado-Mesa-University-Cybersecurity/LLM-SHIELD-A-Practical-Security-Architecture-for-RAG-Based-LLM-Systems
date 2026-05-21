@@ -286,9 +286,15 @@ def chunk_docs(docs: List[Document], chunk_tokens: Optional[int] = None, chunk_o
     return splitter.split_documents(docs)
 
 def get_embeddings(model_name: str) -> HuggingFaceEmbeddings:
+    try:
+        import torch
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    except ImportError:
+        device = "cpu"
+    print(f"[embeddings] Using device: {device} ({model_name})")
     return HuggingFaceEmbeddings(
         model_name=model_name,
-        model_kwargs={"device": "cpu"},
+        model_kwargs={"device": device},
         encode_kwargs={"normalize_embeddings": True},
     )
 
@@ -356,6 +362,12 @@ def load_chat_model(
         verbose: bool = False,
 ) -> ChatLlamaCpp:
     model_path = resolve_model_path(model_name)
+    if n_gpu_layers == -1:
+        print(f"[llm] Using device: cuda (all layers offloaded) ({model_name})")
+    elif n_gpu_layers > 0:
+        print(f"[llm] Using device: cuda ({n_gpu_layers} layers offloaded) ({model_name})")
+    else:
+        print(f"[llm] Using device: cpu ({model_name})")
     llm = ChatLlamaCpp(
         model_path=model_path,
         n_ctx=n_ctx,
@@ -810,8 +822,9 @@ class RAGApp:
                 is_mal = bool(q_res.get("is_malicious", False))
                 print(f"[guard] Question: label={label}, malicious_prob={prob:.3f}, is_malicious={is_mal}")
             if q_res.get("is_malicious"):
-                print(f"[guard] Blocked prompt: malicious_prob={q_res.get('malicious_prob', 0.0):.2f}")
-                return "We couldn’t process that request because it looks like an attempt to change system-level instructions. If you meant something else, please rephrase and try again. If this seems incorrect, contact support and include code: ERR_OVERRIDE_INSTRUCTIONS."
+                if self.cfg.get("Verbose", True):
+                    print(f"[guard] Blocked prompt: malicious_prob={q_res.get('malicious_prob', 0.0):.2f}")
+                return "We couldn't process that request because it looks like an attempt to change system-level instructions. If you meant something else, please rephrase and try again. If this seems incorrect, contact support and include code: ERR_OVERRIDE_INSTRUCTIONS."
 
         db_context = ""
         if self.sb.is_authenticated() and should_fetch_db(question):
@@ -824,7 +837,8 @@ class RAGApp:
                 docs_text = "\n\n".join([d.page_content for d in docs])
                 d_res = self.prompt_guard.check_text(docs_text)
                 if d_res.get("is_malicious"):
-                    print(f"[guard] Retrieved docs flagged: {d_res.get('malicious_prob', 0.0):.2f}")
+                    if self.cfg.get("Verbose", True):
+                        print(f"[guard] Retrieved docs flagged: {d_res.get('malicious_prob', 0.0):.2f}")
                     return "Retrieved documents appear to include instructions that override system behavior. Cannot proceed."
             except Exception as e:
                 print(f"[guard] Error checking retrieved docs: {e}")

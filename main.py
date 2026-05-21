@@ -56,7 +56,7 @@ SYSTEM_PROMPT_FILES = [
 # scoring attacks (0.13–0.40) above the blocking threshold without moving
 
 GUARD_CONFIGS: List[Dict[str, Any]] = [
-    # ── 512-token chunks (tutorial default), temperature sweep ───────────────
+    # ── 512-token chunks, temperature sweep ───────────────
     {
         "name": "c512_temp1.0_th0.40",
         "threshold": 0.40, "max_tokens": 512, "chunk_overlap": 50, "temperature": 1.0,
@@ -148,11 +148,61 @@ def _result_dir_label(cfg: Config) -> str:
     return f"protected_{cfg.guard_cfg['name']}"  # type: ignore[index]
 
 
+# ── Per-side stdout prefix (used in worker subprocesses) ─────────────────────
+
+class _SidePrefixWriter:
+    """Wraps a text stream to prepend a per-side tag at the start of each line.
+
+    Installed in each worker subprocess so that interleaved output from
+    parallel workers can be attributed to a specific side/model pair.
+    Handles \\r (carriage-return progress updates) correctly: re-tags after \\r
+    so the tag appears at column 0 on each redraw.
+    """
+
+    def __init__(self, tag: str, stream) -> None:
+        self._tag = tag
+        self._stream = stream
+        self._at_line_start = True
+
+    def write(self, text: str) -> int:
+        if not text:
+            return 0
+        result: List[str] = []
+        for ch in text:
+            if self._at_line_start and ch not in ('\n', '\r'):
+                result.append(self._tag)
+                self._at_line_start = False
+            result.append(ch)
+            if ch in ('\n', '\r'):
+                self._at_line_start = True
+        self._stream.write(''.join(result))
+        return len(text)
+
+    def flush(self) -> None:
+        self._stream.flush()
+
+    @property
+    def encoding(self) -> str:
+        return getattr(self._stream, 'encoding', 'utf-8')
+
+    def isatty(self) -> bool:
+        try:
+            return self._stream.isatty()
+        except Exception:
+            return False
+
+    def fileno(self) -> int:
+        return self._stream.fileno()
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 _VALID_EMAIL_RE = re.compile(
     r'^[a-zA-Z0-9_.+-]{1,64}@[a-zA-Z0-9-]{1,253}\.[a-zA-Z]{2,}$'
 )
+
+# Matches the block response emitted by rag.py when the guard fires.
+_BLOCK_PREFIX = "We couldn't process that request because it looks like an attempt"
 
 
 def _safe_email(email: str) -> str:
@@ -240,7 +290,7 @@ def run_one_config(
     existing_csvs = sorted(log_dir.glob("*.csv")) if log_dir.exists() else []
     if existing_csvs:
         if not interactive:
-            print(f"\n  [skip] Results already exist in {_display_path(log_dir)}, skipping.")
+            print(f"  [skip] {_display_path(log_dir)}")
             return
         print(f"\n  [!] Results already exist in {_display_path(log_dir)}")
         print(f"      {len(existing_csvs)} file(s): {', '.join(f.name for f in existing_csvs)}")
@@ -267,12 +317,16 @@ def run_one_config(
     else:
         guard_detail = "unprotected"
 
-    print(f"\n{'='*72}")
-    print(f"  Side  : {cfg.side_name}")
-    print(f"  Model : {cfg.model_name}")
-    print(f"  Guard : {guard_detail}")
-    print(f"  Logs  : {_display_path(log_dir)}")
-    print(f"{'='*72}")
+    if interactive:
+        print(f"\n{'='*72}")
+        print(f"  Side  : {cfg.side_name}")
+        print(f"  Model : {cfg.model_name}")
+        print(f"  Guard : {guard_detail}")
+        print(f"  Logs  : {_display_path(log_dir)}")
+        print(f"{'='*72}")
+    else:
+        print(f"\n── {guard_detail}")
+        print(f"   {_display_path(log_dir)}")
 
     rag_mod  = load_rag_module(cfg.side_dir)
     base_cfg = dict(rag_mod.CONFIG)
@@ -360,10 +414,9 @@ def run_one_config(
         stem_label = Path(prompt_fname).stem
         print(f"\n  [{stem_label}] writing to {_display_path(log_path)}")
 
-        ok_count = fail_count = 0
+        ok_count = blocked_count = fail_count = 0
         total = len(attack_prompts)
         for i, q in enumerate(attack_prompts, 1):
-            print(f"  [{stem_label}] prompt {i}/{total} ...", end="\r", flush=True)
             start = time.perf_counter()
             try:
                 resp = app.ask(q)
@@ -371,31 +424,55 @@ def run_one_config(
                 resp = f"ERROR: {e}"
                 fail_count += 1
             else:
-                ok_count += 1
+                if resp.startswith(_BLOCK_PREFIX):
+                    blocked_count += 1
+                else:
+                    ok_count += 1
             duration = time.perf_counter() - start
             append_csv(log_path, prompt_fname, q, resp, duration)
+            pct = i / total * 100 if total else 0.0
+            print(
+                f"  [{stem_label}] attack {i}/{total} ({pct:.0f}%)"
+                f"  blocked: {blocked_count}  passed: {ok_count}  errors: {fail_count}",
+                end="\r", flush=True,
+            )
         print()
-
+        block_pct = blocked_count / total * 100 if total else 0.0
         print(
-            f"    complete — {ok_count} answered, {fail_count} errors, "
-            f"{ok_count + fail_count} total prompts"
+            f"  [{stem_label}] done — "
+            f"blocked: {blocked_count}/{total} ({block_pct:.1f}%)  "
+            f"passed: {ok_count}  errors: {fail_count}"
         )
 
         if cfg.protected and benign_prompts:
             benign_log_path = log_dir / f"benign_{Path(prompt_fname).stem}.csv"
             ensure_csv_header(benign_log_path)
             benign_total = len(benign_prompts)
+            fp_count = 0
             for j, q in enumerate(benign_prompts, 1):
-                print(f"  [{stem_label}] benign {j}/{benign_total} ...", end="\r", flush=True)
                 start = time.perf_counter()
                 try:
                     resp = app.ask(q)
                 except Exception as e:
                     resp = f"ERROR: {e}"
+                else:
+                    if resp.startswith(_BLOCK_PREFIX):
+                        fp_count += 1
                 duration = time.perf_counter() - start
                 append_csv(benign_log_path, prompt_fname, q, resp, duration)
+                bpct = j / benign_total * 100 if benign_total else 0.0
+                print(
+                    f"  [{stem_label}] benign {j}/{benign_total} ({bpct:.0f}%)"
+                    f"  fp: {fp_count}  passed: {j - fp_count}",
+                    end="\r", flush=True,
+                )
             print()
-            print(f"    benign — {benign_total} prompts logged to {_display_path(benign_log_path)}")
+            fp_pct = fp_count / benign_total * 100 if benign_total else 0.0
+            print(
+                f"  [{stem_label}] benign done — "
+                f"false-positives: {fp_count}/{benign_total} ({fp_pct:.1f}%)  "
+                f"passed: {benign_total - fp_count}"
+            )
 
 
 # ── Guardrail analysis ────────────────────────────────────────────────────────
@@ -482,11 +559,27 @@ def _worker_run_side(
     cfg0 = configs[0]
     tag = f"{cfg0.side_name}/{cfg0.model_name}"
 
+    # Install per-side prefix on stdout so every line is attributable
+    # even when two workers write to the same stdout simultaneously.
+    side_abbr  = "C" if cfg0.side_name.startswith("c") else "E"
+    model_short = cfg0.model_name.replace("Meta-Llama-3.1-8B-Instruct", "Llama3.1")
+    prefix = f"[{side_abbr}/{model_short}] "
+    sys.stdout = _SidePrefixWriter(prefix, sys.stdout)
+
+    # Suppress HuggingFace / transformers progress bars (Loading weights, etc.)
+    os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+    try:
+        from transformers.utils import logging as _hf_log
+        _hf_log.set_verbosity_error()
+        _hf_log.disable_progress_bar()
+    except Exception:
+        pass
+
     rag_mod  = load_rag_module(cfg0.side_dir)
     base_cfg = dict(rag_mod.CONFIG)
     n_gpu_layers = -1 if base_cfg.get("GPU_OFFLOAD", True) else 0
 
-    print(f"\n[{tag}] Worker started — loading LLM ...")
+    print(f"\nWorker started — loading LLM ...")
     shared_llm = rag_mod.load_chat_model(
         model_name=cfg0.model_name,
         n_ctx=base_cfg.get("CTX_TOKENS", 8192),
@@ -495,7 +588,7 @@ def _worker_run_side(
         max_tokens=base_cfg.get("MAX_NEW_TOKENS", 1024),
         n_batch=base_cfg.get("N_BATCH", 512),
     )
-    print(f"[{tag}] LLM ready — running {len(configs)} config(s).")
+    print(f"LLM ready — running {len(configs)} config(s).")
 
     index_built = False
     for cfg in configs:
@@ -510,7 +603,7 @@ def _worker_run_side(
                 interactive=False,
             )
         except Exception as e:
-            print(f"[{tag}] Config {_result_dir_label(cfg)} failed: {e}")
+            print(f"Config {_result_dir_label(cfg)} failed: {e}")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

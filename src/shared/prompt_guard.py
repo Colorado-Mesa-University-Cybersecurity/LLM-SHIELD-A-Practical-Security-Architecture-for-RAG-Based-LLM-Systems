@@ -71,11 +71,10 @@ class PromptGuard:
         self.model.to(self._device)
         self.model.eval()
 
-        if self.debug:
-            print(
-                f"[prompt_guard] Loaded {self.model_id} on {self._device}  "
-                f"threshold={self.threshold}  temperature={self.temperature}"
-            )
+        print(
+            f"[prompt_guard] Using device: {self._device}  "
+            f"model={self.model_id}  threshold={self.threshold}  temperature={self.temperature}"
+        )
 
     # ── Chunking ──────────────────────────────────────────────────────────────
 
