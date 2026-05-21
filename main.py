@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
+import concurrent.futures
 import csv
 import importlib.util
+import multiprocessing
 import os
 import re
 import sys
@@ -229,12 +231,17 @@ def run_one_config(
     attack_prompts: List[str],
     benign_prompts: List[str],
     first_run_for_side: bool,
+    shared_llm: Optional[Any] = None,
+    interactive: bool = True,
 ) -> None:
     dir_label = _result_dir_label(cfg)
     log_dir   = RESULTS_ROOT / cfg.side_name / cfg.model_name / dir_label
 
     existing_csvs = sorted(log_dir.glob("*.csv")) if log_dir.exists() else []
     if existing_csvs:
+        if not interactive:
+            print(f"\n  [skip] Results already exist in {_display_path(log_dir)}, skipping.")
+            return
         print(f"\n  [!] Results already exist in {_display_path(log_dir)}")
         print(f"      {len(existing_csvs)} file(s): {', '.join(f.name for f in existing_csvs)}")
         try:
@@ -323,7 +330,7 @@ def run_one_config(
 
     # Load LLM, FAISS, and PromptGuard once for all system-prompt variants.
     try:
-        app = rag_mod.RAGApp(run_cfg)
+        app = rag_mod.RAGApp(run_cfg, llm=shared_llm)
         app.setup()
         app.login(run_cfg["TEST_EMAIL"], run_cfg["TEST_PASSWORD"])
     except Exception as e:
@@ -460,6 +467,52 @@ def prefetch_models() -> None:
     print("  All models cached.\n")
 
 
+# ── Parallel worker ───────────────────────────────────────────────────────────
+
+def _worker_run_side(
+    configs: List[Config],
+    attack_prompts: List[str],
+    benign_prompts: List[str],
+    first_run_for_side: bool,
+) -> None:
+    """Subprocess entry point: loads the LLM once and runs every config for one
+    (side, model) pair sequentially, sharing the loaded model across all of them."""
+    if not configs:
+        return
+    cfg0 = configs[0]
+    tag = f"{cfg0.side_name}/{cfg0.model_name}"
+
+    rag_mod  = load_rag_module(cfg0.side_dir)
+    base_cfg = dict(rag_mod.CONFIG)
+    n_gpu_layers = -1 if base_cfg.get("GPU_OFFLOAD", True) else 0
+
+    print(f"\n[{tag}] Worker started — loading LLM ...")
+    shared_llm = rag_mod.load_chat_model(
+        model_name=cfg0.model_name,
+        n_ctx=base_cfg.get("CTX_TOKENS", 8192),
+        n_gpu_layers=n_gpu_layers,
+        temperature=base_cfg.get("TEMPERATURE", 0.2),
+        max_tokens=base_cfg.get("MAX_NEW_TOKENS", 1024),
+        n_batch=base_cfg.get("N_BATCH", 512),
+    )
+    print(f"[{tag}] LLM ready — running {len(configs)} config(s).")
+
+    index_built = False
+    for cfg in configs:
+        first = first_run_for_side and not index_built
+        if first:
+            index_built = True
+        try:
+            run_one_config(
+                cfg, attack_prompts, benign_prompts,
+                first_run_for_side=first,
+                shared_llm=shared_llm,
+                interactive=False,
+            )
+        except Exception as e:
+            print(f"[{tag}] Config {_result_dir_label(cfg)} failed: {e}")
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -496,27 +549,54 @@ def main() -> None:
         print(f"    {gc['name']}")
     print()
 
-    sides_with_built_index: Set[str] = set()
+    # Group configs by model, then run both sides of each model in parallel.
+    # Each subprocess loads the LLM once and reuses it across all guard configs
+    # for that (side, model) pair (fix #2).  Two workers per model share the
+    # 4090's 24 GB VRAM (~10-11 GB total per model pair).
+    model_names: List[str] = list(dict.fromkeys(c.model_name for c in CONFIGS))
+    sides_indexed: Set[str] = set()
     total_start = time.perf_counter()
 
-    for i, cfg in enumerate(CONFIGS, 1):
-        first_run = cfg.side_name not in sides_with_built_index
-        if first_run:
-            sides_with_built_index.add(cfg.side_name)
+    for model_name in model_names:
+        model_cfgs = [c for c in CONFIGS if c.model_name == model_name]
 
-        dir_label = _result_dir_label(cfg)
-        print(
-            f"\n[{i}/{len(CONFIGS)}] "
-            f"{cfg.side_name} | {cfg.model_name} | {dir_label}"
-        )
-        try:
-            run_one_config(cfg, attack_prompts, benign_prompts, first_run_for_side=first_run)
-        except Exception as e:
-            print(f"  [fatal] Configuration {i} failed: {e}")
+        by_side: Dict[str, List[Config]] = {}
+        for cfg in model_cfgs:
+            by_side.setdefault(cfg.side_name, []).append(cfg)
+
+        side_first_run: Dict[str, bool] = {}
+        for sn in by_side:
+            side_first_run[sn] = sn not in sides_indexed
+            sides_indexed.add(sn)
+
+        n_cfgs = sum(len(v) for v in by_side.values())
+        print(f"\n{'='*72}")
+        print(f"  Model : {model_name}  ({len(by_side)} side(s), {n_cfgs} configs)")
+        print(f"  Launching {len(by_side)} parallel worker(s).")
+        print(f"{'='*72}")
+
+        worker_args = [
+            (cfgs, attack_prompts, benign_prompts, side_first_run[sn])
+            for sn, cfgs in by_side.items()
+        ]
+
+        if len(worker_args) == 1:
+            _worker_run_side(*worker_args[0])
+        else:
+            ctx = multiprocessing.get_context("spawn")
+            with concurrent.futures.ProcessPoolExecutor(
+                max_workers=len(worker_args), mp_context=ctx
+            ) as pool:
+                futs = [pool.submit(_worker_run_side, *args) for args in worker_args]
+                for fut in concurrent.futures.as_completed(futs):
+                    try:
+                        fut.result()
+                    except Exception as e:
+                        print(f"[main] Worker error: {e}")
 
     elapsed = time.perf_counter() - total_start
     print(f"\n{'='*72}")
-    print(f"  All {len(CONFIGS)} configurations complete in {elapsed / 60:.1f} min.")
+    print(f"  All configurations complete in {elapsed / 60:.1f} min.")
     print(f"  Results saved under: {RESULTS_ROOT}")
     print("=" * 72)
 

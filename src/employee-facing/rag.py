@@ -82,7 +82,7 @@ MODELS = [
     },
     {
         "repo_id": "bartowski/Meta-Llama-3.1-8B-Instruct-GGUF",
-        "filename": "Meta-Llama-3.1-8B-Instruct-Q6_K_L.gguf",
+        "filename": "Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf",
         "name": "Meta-Llama-3.1-8B-Instruct",
     },
 ]
@@ -661,11 +661,11 @@ def format_transactions_for_context(rows: List[Dict[str, Any]], max_len: int = 2
     return text
 
 class RAGApp:
-    def __init__(self, cfg: Dict[str, Any]):
+    def __init__(self, cfg: Dict[str, Any], llm: Optional[BaseChatModel] = None):
         self.cfg = cfg
         self.vs: Optional[FAISS] = None
         self.embedder: Optional[HuggingFaceEmbeddings] = None
-        self.llm: Optional[BaseChatModel] = None
+        self.llm: Optional[BaseChatModel] = llm
         self.chain: Optional[Runnable] = None
         self.sb = SupabaseSession.from_config(cfg)
         self.prompt_guard: Optional[PromptGuard] = None
@@ -693,15 +693,22 @@ class RAGApp:
             self.embedder = None
 
         # Load LLM regardless of whether vectorstore exists; chain requires vs later when used.
-        n_gpu_layers = -1 if self.cfg["GPU_OFFLOAD"] else 0
-        self.llm = load_chat_model(
-            model_name=self.cfg["LLM_NAME"],
-            n_ctx=self.cfg["CTX_TOKENS"],
-            n_gpu_layers=n_gpu_layers,
-            temperature=self.cfg["TEMPERATURE"],
-            max_tokens=self.cfg["MAX_NEW_TOKENS"],
-            n_batch=self.cfg.get("N_BATCH", 512),
-        )
+        if self.llm is None:
+            n_gpu_layers = -1 if self.cfg["GPU_OFFLOAD"] else 0
+            self.llm = load_chat_model(
+                model_name=self.cfg["LLM_NAME"],
+                n_ctx=self.cfg["CTX_TOKENS"],
+                n_gpu_layers=n_gpu_layers,
+                temperature=self.cfg["TEMPERATURE"],
+                max_tokens=self.cfg["MAX_NEW_TOKENS"],
+                n_batch=self.cfg.get("N_BATCH", 512),
+            )
+        else:
+            print(f"[llm] Reusing pre-loaded {self.cfg['LLM_NAME']}")
+            try:
+                self.llm.max_tokens = int(self.cfg["MAX_NEW_TOKENS"])
+            except Exception:
+                pass
 
         if self.vs:
             self.chain = build_rag_chain(
