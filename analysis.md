@@ -445,7 +445,205 @@ with API vendors.
 
 ---
 
-## 8. Summary of Findings
+## 8. Regulatory Frameworks and Self-Hosted AI
+
+Regulatory compliance is one of the strongest motivating factors for SMBs to
+consider on-premises deployment. Cloud API usage introduces a third-party data
+processor into the compliance chain, requiring Data Processing Agreements,
+vendor audits, and ongoing assurance that the provider's controls meet the
+applicable standard. Self-hosted deployment eliminates the third party entirely —
+data never crosses an organisational network boundary — but transfers full
+compliance responsibility to the operator. This section examines four frameworks
+that are directly relevant to SMB operators: HIPAA, the Department of Energy
+cybersecurity programme, the Department of Defense contractor framework, and the
+emerging federal AI governance landscape.
+
+### 8.1 HIPAA — Health Insurance Portability and Accountability Act
+
+HIPAA's **Security Rule** (45 CFR § 164.312) specifies technical safeguards
+for electronic Protected Health Information (ePHI). Healthcare SMBs — clinics,
+dental practices, behavioral health providers, billing services — that deploy
+AI on patient records fall squarely within its scope.
+
+The four technical safeguard categories map directly onto this codebase's
+architecture:
+
+| HIPAA Technical Safeguard | CFR Reference | Relevant System Component |
+|---|---|---|
+| Access Control | § 164.312(a)(1) | Supabase row-level auth; role-based retrieval |
+| Audit Controls | § 164.312(b) | CSV result logs per query in `results/` |
+| Integrity | § 164.312(c)(1) | FAISS index checksums (currently absent — gap) |
+| Transmission Security | § 164.312(e)(1) | TLS on Supabase API calls; local-only LLM |
+
+A critical 2025 update to the Security Rule removed the historical distinction
+between *required* and *addressable* safeguards, making encryption, MFA, and
+network segmentation unconditionally mandatory. For an on-premises AI deployment
+this means: disk encryption for the FAISS index and GGUF model files, MFA on
+the host machine's remote access, and TLS for any network call the pipeline makes
+(Supabase, HuggingFace Hub downloads).
+
+The **PII redaction layer** in this system (`src/employee-facing/rag.py:104–150`)
+directly addresses the data-minimisation principle that underlies HIPAA: credit
+card numbers, SSNs, and email addresses are stripped from retrieved document
+content *before* they enter the LLM context, preventing the model from reproducing
+them in output. A HIPAA-compliant deployment would extend this to medical record
+numbers, dates of birth, and the other 18 PHI identifier categories defined in
+45 CFR § 164.514(b)(2).
+
+Compared with cloud API usage, self-hosting eliminates the Business Associate
+Agreement (BAA) negotiation that HIPAA mandates for any third-party processor of
+ePHI. Several major API providers offer BAAs, but they impose usage restrictions
+(no training on customer data, no persistent storage) that constrain fine-tuning
+and retrieval-index workflows. On-premises deployment faces none of these
+contractual limits.
+
+### 8.2 Department of Energy (DOE) — Cybersecurity Programme
+
+The DOE operates nuclear facilities, national laboratories, and critical energy
+infrastructure, and its contractor base includes many SMBs providing engineering,
+IT, and analytical services. The governing document is **DOE Order 205.1C**
+(*Departmental Cybersecurity Program*), which delegates risk management downward
+to individual programme offices and sites but anchors all technical controls in
+**NIST SP 800-53** (for federal systems) and **NIST SP 800-171** (for contractor
+systems handling Controlled Unclassified Information under 32 CFR Part 2002).
+
+For an SMB contractor deploying an AI assistant on DOE-related work products,
+the critical obligations are:
+
+**CUI handling.** Documents classified as CUI Specified — including nuclear
+facility design details, export-controlled research, and grid vulnerability
+assessments — must remain on systems that satisfy 800-171's 110 security controls.
+Self-hosting inherently supports this: the documents never transit an external API
+endpoint. Cloud-based RAG over CUI documents would require a FedRAMP-authorised
+cloud service, adding substantial procurement complexity and cost.
+
+**System boundary definition.** DOE requires a defined, documented system
+boundary for any information system that touches CUI. A self-hosted RAG stack
+with a fixed FAISS index, a local inference binary, and a private network
+interface presents a simpler boundary to document and certify than a hybrid
+system with cloud API calls.
+
+**AI-specific gap.** As of 2025, DOE Order 205.1C does not address AI-specific
+risks (model inversion, prompt injection as a CUI-extraction vector, or
+adversarial perturbations of embedded documents). The Prompt Guard layer in this
+system (`src/shared/prompt_guard.py`) provides a practical defence against
+prompt injection that goes beyond what current DOE guidance explicitly requires —
+positioning a contractor that implements it ahead of forthcoming AI-specific
+annexes to the cybersecurity order.
+
+### 8.3 Department of Defense (DoD) — CMMC, ITAR, and DFARS
+
+DoD contractors face the densest regulatory environment of any SMB category.
+Three frameworks are simultaneously relevant to a self-hosted AI deployment.
+
+**CMMC 2.0 (Cybersecurity Maturity Model Certification).** CMMC 2.0 Level 2
+requires compliance with all 110 practices in NIST SP 800-171, spread across
+14 domains (Access Control, Audit and Accountability, Incident Response, and
+others). From DFARS clause 252.204-7012, any system that *processes, stores, or
+transmits* Covered Defense Information (CDI) must meet these controls. An LLM
+that retrieves and answers questions about defence contract documents processes
+CDI within the regulatory definition.
+
+The audit-and-accountability domain (NIST 800-171 controls 3.3.1–3.3.2) requires
+logged records of who accessed what data and when. The CSV output structure in
+this codebase (`question`, `response`, `duration` per row in `results/`) provides
+a partial audit trail but does not capture the authenticated user identity or
+the specific document chunks retrieved — both of which would be required for a
+CMMC-compliant deployment. Adding user identity to the CSV logger and logging the
+FAISS retrieval results alongside each query would close this gap.
+
+**ITAR (International Traffic in Arms Regulations).** ITAR controls the export
+of defence articles, technical data, and defence services. As of January 2025,
+the Bureau of Industry and Security (BIS) extended export controls to AI model
+weights trained with more than 10²⁶ floating-point operations (ECCN 4E091).
+For an SMB fine-tuning an LLM on defence-related technical data:
+
+1. The *training data* may itself constitute ITAR-controlled technical data,
+   restricting who may participate in the fine-tuning process.
+2. The resulting *fine-tuned model weights* may inherit the export-control
+   classification of the training data.
+3. Uploading weights to a cloud fine-tuning service would constitute an
+   unauthorised export.
+
+Self-hosted fine-tuning (as implemented in `experiments/train.py`) is therefore
+not merely an economic choice for ITAR-adjacent SMBs — it is a compliance
+requirement. The training script runs entirely on local hardware; no data or
+weights leave the system.
+
+**DFARS 252.204-7012** requires DoD contractors to report cyber incidents
+within 72 hours. A self-hosted system generates local logs that the operator
+controls, making incident reconstruction and reporting straightforward. Cloud
+API deployments complicate this: the operator may lack access to the provider's
+infrastructure logs, potentially impeding the contractually mandated timeline.
+
+### 8.4 Federal AI Security Governance — NIST AI RMF and Emerging Legislation
+
+Unlike HIPAA and CMMC, there is no single enacted federal statute specifically
+titled "Federal AI Security Act" as of mid-2025. The term *FAISA* appears in
+policy discussions as a proposed regulatory structure that Congress has not
+passed; the White House's March 2026 National AI Policy Framework explicitly
+rejected the creation of a new AI regulatory agency in favour of sector-specific
+oversight through existing bodies (FDA, FTC, SEC, CFPB). The operative federal
+AI governance standard for SMBs seeking to demonstrate security due diligence is
+therefore a combination of the NIST AI Risk Management Framework and the sector
+regulator's own guidance.
+
+**NIST AI RMF 1.0** (published January 2023) organises AI risk management into
+four functions — *GOVERN*, *MAP*, *MEASURE*, and *MANAGE* — that together
+constitute a continuous risk cycle. NIST AI 600-1 (July 2024) extends this into
+a Generative AI Profile that addresses LLM-specific risks including prompt
+injection, data poisoning, and hallucination. The profile is referenced by the
+FTC, FDA, and EEOC in their own AI guidance.
+
+Mapping the codebase against the AI RMF Generative AI Profile:
+
+| NIST AI 600-1 Risk | Profile Suggested Action | Implementation in this Repo |
+|---|---|---|
+| Prompt Injection | Input validation and filtering | Prompt Guard with 12-config sweep |
+| Data Privacy | PII de-identification | Regex redaction before LLM context |
+| Confabulation (hallucination) | Ground responses in retrieved facts | RAG retrieval anchors all answers |
+| Information Integrity | Provenance tracking for retrieved content | FAISS retrieval (chunk source partially tracked) |
+| Model Behaviour Anomalies | Audit logging | CSV query/response logs |
+| Harmful Bias | Documented evaluation | Not addressed — gap for regulated deployments |
+
+The **GOVERN** function of the AI RMF requires that the organisation document
+roles, responsibilities, and accountability for AI risk. For an SMB, this means
+designating an owner for the RAG system configuration, establishing a review
+cadence for guard-threshold recalibration (analogous to the benchmark sweep in
+`main.py`), and maintaining records of system-prompt changes. None of this
+requires a large compliance team; a single technically accountable person and
+a lightweight change-log discipline satisfies the intent.
+
+**Executive Order 14110** (*Safe, Secure, and Trustworthy AI*, October 2023)
+directed NIST, CISA, and sector agencies to develop AI-specific security
+guidelines. The practical output for SMBs has been sector-specific guidance
+(FDA's AI/ML action plan for medical devices, CISA's AI security guidelines
+for critical infrastructure) rather than uniform cross-sector mandates. SMBs
+operating in these sectors should consult the sector-specific annexes; the
+common thread across all of them is the requirement for documented evaluation of
+adversarial robustness — precisely the kind of systematic guard-configuration
+testing that this repo's benchmark was designed to produce.
+
+### 8.5 Cross-Framework Compliance Summary
+
+| Framework | Data-Residency Benefit | Primary Gap in This Codebase | Effort to Close |
+|---|---|---|---|
+| HIPAA | Eliminates BAA requirement | PHI identifier regex coverage incomplete | Low |
+| DOE / CUI | Satisfies 800-171 boundary | No AI-specific risk documentation | Low |
+| DoD / CMMC | Enables local CDI processing | Audit log missing user identity + retrieved chunks | Medium |
+| DoD / ITAR | Fine-tuning on local hardware only | No weight-export controls or checksums | Medium |
+| NIST AI RMF | Full transparency into stack | Bias evaluation absent; provenance partial | Medium |
+
+Across all five frameworks the self-hosted architecture provides a materially
+stronger starting position than cloud API usage: data residency is automatic,
+the full audit surface is operator-controlled, and supply-chain risk is bounded
+to the open-weight model download (which is addressable with checksum
+verification). The gaps identified above are engineering tasks, not architectural
+changes, and fall within the capacity of a motivated SMB development team.
+
+---
+
+## 9. Summary of Findings
 
 | Criterion | Assessment |
 |---|---|
@@ -460,7 +658,7 @@ with API vendors.
 
 ---
 
-## 9. Conclusion
+## 10. Conclusion
 
 The evidence from this codebase suggests that on-premises AI deployment is
 technically and economically viable for SMBs with a moderate technical staff and
