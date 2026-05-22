@@ -168,6 +168,11 @@ def build_guardrail_reports(
         raise FileNotFoundError(f"Prompts directory not found: {prompts_path}")
 
     csv_paths = sorted(prompts_path.glob(filename_glob), key=lambda p: p.name)
+    # The default glob "*_prompt.csv" also matches "benign_<n>_prompt.csv",
+    # which would double-count those files (once here as if they were attack
+    # runs, then again in the benign pass below). Exclude them so attack and
+    # benign files are processed exactly once each.
+    csv_paths = [p for p in csv_paths if not p.name.startswith("benign_")]
     target_norm = normalize_text(response_match_text)
 
     summary_rows: List[Dict[str, str]] = []

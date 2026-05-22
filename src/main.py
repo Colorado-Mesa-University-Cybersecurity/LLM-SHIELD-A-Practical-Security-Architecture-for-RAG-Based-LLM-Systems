@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 
 # ── Directory layout ──────────────────────────────────────────────────────────
 
-ROOT_DIR = Path(__file__).resolve().parent
+ROOT_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT_DIR / ".env")
 
 
