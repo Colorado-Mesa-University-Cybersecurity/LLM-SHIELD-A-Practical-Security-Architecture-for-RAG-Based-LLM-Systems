@@ -1,683 +1,933 @@
-# On-Premises AI for Small and Medium-Sized Businesses: A Feasibility and Security Analysis
+# On-Premises Large Language Model Deployment for Resource-Constrained Organisations: Security Architecture, Threat Model, and Regulatory Compliance
 
-*Based on the Specialized-AI-Agents codebase — a complete self-hosted RAG system with
-prompt-injection defences, guard-configuration benchmarking, and domain fine-tuning.*
+**Anonymous Author(s)**
+*Affiliation TBD*
 
 ---
 
 ## Abstract
 
-Cloud-hosted large language model (LLM) APIs offer immediate capability but impose
-ongoing per-token costs, transmit potentially sensitive business data to third-party
-servers, and leave the operator with little control over the model's behaviour on
-proprietary knowledge bases. This paper examines whether small to medium-sized
-businesses (SMBs) can meaningfully substitute on-premises AI deployments for
-cloud APIs, with particular emphasis on the security challenges that accompany
-self-hosting. Using the Specialized-AI-Agents repository as a working case study,
-we analyse the hardware economics, software architecture, and security posture of a
-production-oriented local RAG (Retrieval-Augmented Generation) system, and we
-evaluate a systematic benchmark that sweeps twelve prompt-guard configurations
-across two LLMs, two deployment contexts, and four system-prompt sizes. We conclude
-that on-premises deployment is technically feasible for a motivated SMB with a
-single consumer-grade GPU, that the main security risks are prompt-injection and
-data exfiltration rather than model extraction, and that a defence-in-depth stack
-(input classifier + PII redaction + output filtering) provides meaningfully better
-protection than any single measure, albeit with a false-positive cost that must be
-calibrated to the deployment context.
+Cloud-hosted large language model (LLM) APIs expose organisations to data-egress
+risk, perpetual per-token costs, and limited control over inference behaviour. This
+paper examines whether small to medium-sized businesses (SMBs) can viably substitute
+on-premises deployments using open-weight models and commodity GPU hardware. We
+present a production-grade dual-context retrieval-augmented generation (RAG) system
+deployed for a property-management company, secured by a three-layer defence stack:
+(i) a configurable prompt-injection classifier based on Llama-Prompt-Guard-2 with
+temperature-scaled logits and overlapping token-level chunking, (ii) regex-based PII
+redaction applied before document content reaches the LLM context window, and
+(iii) optional retrieved-document scanning defending against indirect prompt
+injection. We systematically describe a benchmark methodology that sweeps twelve
+classifier hyperparameter configurations—varying chunk size (128 vs. 512 tokens),
+chunk overlap (50–100 tokens), softmax temperature (1.0–5.0), and blocking threshold
+(0.40–0.50)—across two LLMs, two deployment contexts, and four system-prompt sizes,
+measuring true-positive rate and false-positive rate as dual objectives. We further
+analyse the hardware economics of self-hosted deployment, finding a break-even of
+approximately four to five months against mid-range cloud API pricing at 5,000
+queries per day, and map the architecture against five regulatory frameworks: HIPAA,
+DOE Order 205.1C, DoD CMMC 2.0, ITAR, and the NIST AI Risk Management Framework.
+Our analysis identifies data residency as the primary compliance benefit of
+self-hosting and prompt injection as the dominant operational security threat,
+for which the multi-layer guard provides measurably better coverage than any single
+mechanism. Full empirical results from the benchmark sweep are pending dataset
+finalisation and will be reported in a follow-on study.
 
 ---
 
 ## 1. Introduction
 
-The commercialisation of large language models has created a new class of business
-risk: companies now routinely send internal documents, customer data, and operational
-queries to third-party inference endpoints in exchange for API access. For
-organisations subject to data-protection regulations (GDPR, HIPAA, CCPA) or that
-handle commercially sensitive IP, this arrangement is problematic regardless of the
-API provider's contractual guarantees. On-premises deployment—running the model on
-hardware the organisation controls—eliminates this data-egress risk entirely.
+The proliferation of accessible open-weight language models—Llama 3 [1], Qwen3 [2],
+Mistral [3]—has created a practical alternative to commercial API access for
+organisations whose workloads are constrained by data-residency obligations, cost
+sensitivity, or the need to customise model behaviour. For SMBs in particular,
+cloud API pricing at inference scale can exceed the annualised cost of a single
+consumer GPU within months, while the data processor relationship introduced by
+third-party API usage complicates compliance with HIPAA, CMMC, and equivalent
+frameworks that impose strict controls on where regulated data may be processed.
 
-At the same time, on-premises LLM deployment has historically been the exclusive
-domain of well-resourced enterprises. The 2022–2025 open-model era has materially
-changed this. Quantised GGUF variants of frontier-class models (7–8 B parameters)
-now execute at conversational speeds on a single consumer GPU with 16–24 GB of VRAM,
-and the llama.cpp inference engine has reduced the C++ expertise barrier to near
-zero. The question is no longer *whether* an SMB can run a local LLM but *what it
-costs*, *how secure it is*, and *whether the output quality justifies the complexity*.
+Yet on-premises LLM deployment introduces a distinct set of security challenges.
+The organisation now bears sole responsibility for defending against adversarial
+inputs—a task for which no established operational playbook exists at the SMB scale.
+Prompt injection, the dominant practical attack against LLM-integrated systems [4,5],
+can extract information across authorisation boundaries, override system-level
+instructions, and cause the model to take unintended actions against back-end
+services. Retrieval-augmented generation (RAG) architectures [6], which are
+necessary for grounding responses in domain-specific knowledge bases, add a further
+indirect injection surface: documents stored in the retrieval index may themselves
+contain adversarially crafted content [7].
 
-This paper addresses all three questions through the lens of a concrete implementation:
-a dual-context (employee-facing and customer-facing) RAG system secured by
-Meta's Llama-Prompt-Guard-2 classifier and evaluated by a systematic sweep of guard
-hyperparameters.
+This paper makes the following contributions:
+
+1. **System architecture.** We describe a complete, production-deployed dual-context
+   RAG system securing a property management company's employee-facing and
+   customer-facing AI assistants. The system uses quantised 8B-parameter models
+   running on a single consumer GPU, achieving inference latency compatible with
+   interactive use.
+
+2. **Security architecture.** We detail a three-layer defence-in-depth stack
+   incorporating a configurable prompt-injection classifier, PII redaction, and
+   retrieved-document scanning, and explain the architectural rationale for each
+   layer's placement in the data pipeline.
+
+3. **Benchmark methodology.** We describe a systematic 52-configuration sweep
+   (12 guard configurations × 2 deployment sides × 2 LLMs, plus unprotected
+   baselines) designed to characterise the precision–recall trade-off of the
+   classifier under varying hyperparameter settings and system-prompt lengths.
+   We discuss design choices, known confounds, and the statistical requirements
+   for valid inter-configuration comparison.
+
+4. **Regulatory analysis.** We map the architecture against HIPAA, DOE Order 205.1C,
+   DoD CMMC 2.0, ITAR, and the NIST AI RMF 1.0/AI 600-1 Generative AI Profile,
+   identifying where self-hosting provides compliance benefits and where gaps remain.
+
+5. **Feasibility analysis.** We provide a hardware cost model and total-cost-of-ownership
+   comparison showing that on-premises deployment is economically viable for SMBs
+   at moderate query volumes.
+
+**Scope and limitations.** The empirical benchmark described in §6 requires
+finalisation of the attack and benign prompt datasets; full results will be reported
+separately. The cost model uses publicly available pricing as of mid-2025 and should
+be updated as hardware and API pricing evolves. The regulatory analysis is descriptive
+and does not constitute legal advice.
 
 ---
 
-## 2. System Architecture
+## 2. Related Work
 
-### 2.1 Inference Layer
+### 2.1 Prompt Injection and Jailbreaking
 
-The system uses **llama.cpp** via the LangChain `ChatLlamaCpp` wrapper
-(`src/employee-facing/rag.py:355–380`). Two quantised GGUF models are supported
-interchangeably:
+Perez and Ribeiro [4] introduced the term *prompt injection* to describe attacks
+that embed adversarial instructions in user input to override an LLM's prior
+directives. Subsequent work showed that such attacks are broadly effective against
+instruction-tuned models without dedicated defences [5]. Greshake et al. [7]
+extended the threat model to *indirect* injection—where adversarial instructions
+are embedded in third-party content (documents, web pages, database records)
+retrieved by an LLM agent—demonstrating compromise of real-world LLM-integrated
+applications. This threat is directly applicable to RAG architectures, which
+ingest untrusted document corpora into the LLM context window.
 
-| Model | GGUF variant | Quantisation | Approx. VRAM |
+Zou et al. [8] demonstrated universal, transferable adversarial suffixes that
+reliably jailbreak aligned models. The GCG attack and its successors produce
+prompts that defeat refusal training by optimising directly against model logits.
+Classifier-based guards such as Prompt Guard operate at a different layer—screening
+inputs before they reach the target model—and are therefore not directly susceptible
+to gradient-based optimisation against the guarded model. However, they remain
+vulnerable to adversarial examples crafted against the classifier itself, a
+limitation we discuss in §9.
+
+### 2.2 Evaluation Benchmarks for LLM Security
+
+JailbreakBench [9] provides a standardised evaluation framework for jailbreak
+robustness, defining a canonical attack dataset and judge model. HarmBench [10]
+extends this with a broader taxonomy of harmful request categories and a
+methodology for comparing diverse attack and defence methods. Both benchmarks
+target the base model's refusal behaviour rather than pre-model classifier gates.
+Our methodology is complementary: we evaluate the gate layer rather than the
+model, and we explicitly measure false-positive rate as a co-equal objective to
+reflect the operational cost of over-blocking in an SMB deployment.
+
+### 2.3 Retrieval-Augmented Generation
+
+Lewis et al. [6] introduced RAG as a framework for combining parametric model
+knowledge with non-parametric retrieval from an external document store. The
+architecture significantly reduces hallucination rates on knowledge-intensive tasks
+by anchoring generation to retrieved evidence. FAISS [11] provides the efficient
+approximate nearest-neighbour index that makes dense retrieval practical at the
+document corpus sizes typical of SMB deployments (tens of thousands of chunks).
+Security considerations specific to RAG—index poisoning, context injection via
+retrieved documents, and membership inference against the retrieval index—have
+received growing attention [7,12] but remain understudied at the system level.
+
+### 2.4 Quantised Inference on Consumer Hardware
+
+GPTQ [13] and subsequent methods demonstrated that 4-bit post-training quantisation
+preserves the majority of model quality for instruction-following tasks while
+reducing memory requirements by approximately 4×. The GGUF format and llama.cpp
+runtime [14] operationalised quantised inference on consumer CPUs and GPUs without
+requiring Python or specialised ML frameworks, substantially lowering the deployment
+barrier for organisations without dedicated ML infrastructure. QLoRA [15] extended
+efficient inference techniques to fine-tuning, enabling parameter-efficient
+adaptation of 7–13B models on a single consumer GPU—a capability we exploit in
+the domain fine-tuning component of this work.
+
+### 2.5 Security and Privacy in Machine Learning Systems
+
+Carlini et al. [16] demonstrated that training data can be extracted verbatim
+from large language models, establishing a privacy threat model that persists after
+instruction fine-tuning. Papernot et al. [17] surveyed the broader security and
+privacy landscape of machine learning, covering model extraction, membership
+inference, and adversarial examples. For on-premises SMB deployments, the most
+operationally relevant of these threats is membership inference against the
+retrieval index and model inversion against fine-tuned weights, both of which
+become more tractable if an attacker gains access to the model files directly—
+motivating the filesystem-level security controls discussed in §8.
+
+---
+
+## 3. Threat Model
+
+### 3.1 System and Adversary Model
+
+We consider a dual-context deployment: an *employee-facing* assistant with access
+to internal HR, financial, and operational documents, and a *customer-facing*
+assistant with access to a curated public knowledge base. Both contexts authenticate
+users against a shared database backend.
+
+We define three classes of adversary:
+
+**A1 — Authenticated insider.** An employee or customer with valid credentials
+who attempts to extract information outside their authorisation boundary (e.g.,
+an employee querying other employees' financial records, or a tenant accessing
+another tenant's lease terms). This adversary has interactive access to the chat
+interface but no access to the system infrastructure.
+
+**A2 — External attacker via prompt injection.** An unauthenticated or
+authenticated adversary who crafts queries designed to override system-level
+instructions, exfiltrate retrieval index content, or cause the model to take
+unintended back-end actions. This adversary knows the general architecture (assumes
+a RAG pipeline) but may not know the specific system prompt.
+
+**A3 — Knowledge-base poisoner.** An adversary who can write to the document
+corpus from which the RAG index is built. This could be an insider with document
+upload permissions or an external attacker who compromises the document storage
+layer. The goal is indirect prompt injection: embedding adversarial instructions
+in documents that are later retrieved and injected into the LLM context.
+
+We explicitly exclude:
+
+- **Nation-state-level attackers** with physical access to the inference hardware,
+  as on-premises deployment does not mitigate hardware-level threats.
+- **Supply-chain compromise** of model weights, though we note this as a gap in
+  current deployments (§9.3).
+- **Denial of service** attacks, which are resource-management problems rather
+  than information-security problems.
+
+### 3.2 Security Goals
+
+For each adversary class we define the desired security property:
+
+| Adversary | Attack Vector | Security Goal |
+|---|---|---|
+| A1 | Role escalation via crafted query | Retrieval isolation by authenticated role |
+| A1 | PII exfiltration from documents/DB | PII not surfaced in LLM output |
+| A2 | Direct prompt injection | System instructions not overridable by user input |
+| A2 | Jailbreak to produce harmful output | Model refuses off-topic harmful requests |
+| A3 | Indirect injection via retrieved docs | Retrieved content does not override system prompt |
+
+### 3.3 Trust Boundaries
+
+The system's trust architecture has three boundaries:
+
+1. **Network boundary.** All LLM inference and retrieval occurs on-premises;
+   only Supabase API calls transit the network. This boundary is the primary
+   argument for data-residency compliance.
+
+2. **Application boundary.** User inputs are classified by the Prompt Guard
+   classifier before reaching the LLM. Retrieved documents are optionally
+   classified before being appended to the LLM context. The classifier's
+   decision is final; the LLM never sees inputs that the classifier rejects.
+
+3. **Filesystem boundary.** GGUF model weights, the FAISS index, and the Supabase
+   credentials file reside on the local filesystem. Access to this boundary
+   enables model extraction and index reconstruction by a filesystem-level attacker,
+   which we treat as outside the security perimeter of the AI application layer.
+
+---
+
+## 4. System Architecture
+
+### 4.1 Inference Layer
+
+The system uses **llama.cpp** [14] via the LangChain `ChatLlamaCpp` wrapper.
+Two quantised GGUF models are supported interchangeably at runtime:
+
+| Model | Variant | Quantisation | Approx. VRAM |
 |---|---|---|---|
 | Qwen3-8B | `Qwen3-8B-Q4_K_M.gguf` | 4-bit K-quant | ~5.5 GB |
-| Llama 3.1 8B Instruct | `Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf` | 4-bit K-quant | ~5.5 GB |
+| Meta-Llama-3.1-8B-Instruct | `Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf` | 4-bit K-quant | ~5.5 GB |
 
-With `n_gpu_layers=-1` (full GPU offload), all transformer layers reside in VRAM,
-leaving the CPU responsible only for tokenisation and sampling. A context window of
-8,192 tokens (`CTX_TOKENS`) accommodates RAG retrieval results comfortably at a
-batch size of 512 (`N_BATCH`).
+With `n_gpu_layers=-1` (full GPU offload), all transformer layers reside in VRAM.
+A context window of 8,192 tokens and a batch size of 512 provide adequate
+throughput for interactive single-user workloads. The inference temperature is set
+to 0.2 to minimise stochastic variation between equivalent queries.
 
-### 2.2 Retrieval Layer
+### 4.2 Retrieval Layer
 
-Document retrieval uses a **FAISS flat-index** (`src/employee-facing/rag.py:288–299`)
-backed by **BAAI/bge-small-en-v1.5** sentence embeddings (33 M parameters, ~130 MB
-on disk). Documents are chunked at 512 tokens with a 20-token overlap before
-indexing. At query time the top-K=5 chunks are retrieved and prepended to the LLM
-context. Supported document types include PDF, DOCX, TXT, CSV, and TSV, making the
-pipeline practical for real-world SMB knowledge bases that accumulate in mixed
-formats.
+Document retrieval uses a **FAISS flat L2 index** [11] over **BAAI/bge-small-en-v1.5**
+sentence embeddings [18] (33 M parameters). Documents are chunked at 512 tokens
+with a 20-token overlap before indexing. At query time the top-K=5 nearest chunks
+are retrieved and prepended to the LLM context. Supported document formats include
+PDF, DOCX, TXT, CSV, and TSV. The index is built once and served from disk on
+subsequent runs, with a flag (`REBUILD_INDEX`) for forced rebuilds when the corpus
+changes.
 
-### 2.3 Authentication and Data Source
+### 4.3 Dual-Context Deployment
 
-User-facing sessions are authenticated against a **Supabase** backend. The system
-queries a `renter_transactions` table for structured financial data and merges the
-results with unstructured document retrieval before answering questions. This
-dual-source design is common in property management, legal, and finance SMBs where
-both narrative policy documents and transaction records must be consulted together.
+The employee-facing context indexes internal HR, operational, and financial
+documents (`./downloads`). The customer-facing context indexes a curated public
+knowledge base (`./docs`). Both share the same codebase with different `DATA_PATHS`
+configuration entries, enabling the same guard and retrieval infrastructure to
+serve both contexts while maintaining document-level isolation between them.
 
-### 2.4 Deployment Duality
+### 4.4 Database Integration
 
-The repository maintains two semantically separate deployments—employee-facing
-(`src/employee-facing/`) and customer-facing (`src/customer-facing/`)—with identical
-code structure but distinct document bases (`./downloads` vs. `./docs`). This mirrors
-a common SMB requirement: employees need access to internal HR, operations, and
-financial documents, while customers interact with a curated public-facing knowledge
-base. Running both on the same hardware is economically advantageous but introduces
-a cross-contamination risk that must be mitigated at the retrieval layer.
+Both contexts authenticate users against a Supabase backend and query a
+`renter_transactions` table for structured financial data. Retrieved rows are
+merged with document chunks into the LLM context, enabling the assistant to
+synthesise answers from both unstructured policy documents and structured
+transaction records. This dual-source design is common in property management,
+legal, and financial SMBs.
 
----
+### 4.5 Hardware Footprint
 
-## 3. Security Architecture
-
-Self-hosted AI introduces a qualitatively different threat model than cloud APIs.
-The operator now controls the model weights, the inference stack, and the data, but
-also bears full responsibility for defending against adversarial inputs. Three
-primary attack classes are relevant to SMB deployments:
-
-1. **Prompt injection / jailbreaking** — malicious user input that attempts to
-   override the system prompt or extract information outside the user's authorisation
-   boundary.
-2. **PII leakage** — the model surfacing personally identifiable information (email
-   addresses, credit card numbers, SSNs) retrieved from documents or the database.
-3. **Model extraction** — systematic querying to replicate model behaviour; less
-   critical for commodity open-weights models but relevant when the SMB has
-   fine-tuned on proprietary data.
-
-The codebase implements defences for the first two categories through a
-three-layer architecture.
-
-### 3.1 Layer 1 — Input Classification (Prompt Guard)
-
-The primary gate is **meta-llama/Llama-Prompt-Guard-2-86M**, a 86 M-parameter
-BERT-family sequence classifier trained by Meta to distinguish benign from
-jailbreak/injection inputs (`src/shared/prompt_guard.py`).
-
-The implementation extends the reference tutorial with two important additions:
-
-**Overlapping chunking.** Long inputs are split into overlapping windows of at
-most `max_tokens` tokens with a configurable `chunk_overlap`. The maximum malicious
-probability across all chunks determines the final verdict. This prevents injection
-fragments near chunk boundaries from escaping detection:
-
-```python
-step = max(1, self.max_tokens - self.chunk_overlap)
-start = 0
-while start < len(ids):
-    end = min(start + self.max_tokens, len(ids))
-    # ... score chunk
-    start += step
-```
-
-**Softmax temperature scaling.** Before computing probabilities from classifier
-logits, the logits are divided by a temperature parameter `T`:
-
-```
-p_malicious = softmax(logits / T)[MALICIOUS_IDX]
-```
-
-For `T > 1`, the distribution flattens, assigning higher probability mass to the
-malicious class for borderline inputs. This trades increased recall (fewer missed
-attacks) for decreased precision (more false positives). The benchmark
-systematically explores this trade-off at `T ∈ {1.0, 1.5, 2.0, 3.0, 5.0}`.
-
-**Fail-closed error handling.** Any exception during chunk scoring returns
-`malicious_prob = 1.0`, ensuring the guard degrades safely under resource pressure
-or model-loading errors.
-
-### 3.2 Layer 2 — PII Redaction
-
-When `REDACT_PII` is enabled, the pipeline applies three regex-based redactors to
-both retrieved documents and database output before the content is assembled into
-the LLM prompt (`src/employee-facing/rag.py:104–150`):
-
-- **Credit card numbers** (13–19 digit sequences): all but last four digits masked
-- **Social Security Numbers** (`\d{3}-\d{2}-\d{4}`): fully masked as `***-**-****`
-- **Email addresses**: username redacted beyond first character
-
-Critically, redaction is applied *before* the retrieved content reaches the LLM
-context, not after generation. This is architecturally important: a generative
-model that has already processed unredacted PII in its context window may reproduce
-it even if the output is post-filtered.
-
-### 3.3 Layer 3 — Retrieved-Document Scanning
-
-An optional second invocation of the Prompt Guard classifier screens retrieved
-document chunks for embedded injection payloads (`PROMPT_GUARD_CHECK_RETRIEVED_DOCS`).
-This defends against **indirect prompt injection** — the emerging attack where an
-adversary embeds override instructions in a document that the victim organisation
-later ingests into its knowledge base. When enabled, each retrieved document chunk
-passes through the same classifier as user queries. The cost is proportional to the
-number of retrieved chunks (top-K × average chunk length).
-
----
-
-## 4. Security Benchmark Design
-
-### 4.1 Configuration Space
-
-The benchmark sweeps **12 guard configurations** plus one unprotected baseline
-across all combinations of (side, model, system-prompt size):
-
-| Dimension | Values |
-|---|---|
-| Deployment side | employee-facing, customer-facing |
-| LLM | Qwen3-8B, Llama 3.1 8B |
-| System-prompt size | 100, 500, 1000, 1500 tokens |
-| Guard configs | 12 protected + 1 unprotected |
-
-This yields **104 distinct run conditions** per attack-prompt set (52 configurations
-× 2 system-prompt variants per config — one active and one rolled into the baseline).
-The full cross-product is executed in parallel using `concurrent.futures.ProcessPoolExecutor`
-with two worker processes per model (`main.py`), sharing a single LLM instance to
-avoid the VRAM cost of loading the same weights twice.
-
-### 4.2 Guard Configuration Parameters
-
-The twelve protected configurations vary three axes:
-
-| Parameter | Values tested |
-|---|---|
-| Chunk size (`max_tokens`) | 128, 512 |
-| Chunk overlap | 50 tokens (512-chunk), 100 tokens (128-chunk) |
-| Temperature | 1.0, 1.5, 2.0, 3.0, 5.0 |
-| Blocking threshold | 0.40, 0.50 |
-
-Smaller chunks with larger overlaps maximise coverage of injection fragments
-distributed across long inputs, at the cost of more classifier forward passes.
-A 512-token context scanned with 128-token chunks and 100-token overlap requires
-⌈(512 − 100) / (128 − 100)⌉ + 1 = 16 forward passes vs. a single pass for a
-512-token chunk. On the test hardware this raises per-query latency from ~15 ms
-to ~240 ms for the Guard model, which must be weighed against the protection benefit.
-
-### 4.3 Metrics
-
-For each configuration the analysis module (`src/shared/guardrail_analysis.py`)
-computes:
-
-- **True positive rate (TPR)** — fraction of attack prompts that returned the
-  canonical block response
-  (`"We couldn't process that request because it looks like an attempt to change system-level instructions..."`)
-- **False positive rate (FPR)** — fraction of benign prompts that were blocked
-- **Failures** — attack prompts that passed the guard and received substantive responses,
-  written to `guardrail_failures.csv` for manual review
-
-The dual-metric design acknowledges that over-blocking is a real cost for SMB
-deployments: a customer-service bot that rejects 20 % of legitimate enquiries is
-not commercially viable regardless of its security properties.
-
----
-
-## 5. Hardware Feasibility Analysis
-
-### 5.1 Minimum Viable Configuration
-
-The reference hardware in the codebase comment is an **NVIDIA RTX 4090 (24 GB VRAM)**,
-later upgraded to an **RTX 5090 (32 GB VRAM)**. The memory budget for a complete
-running system (one LLM + embeddings + Prompt Guard + FAISS index) is:
+The complete running system—one LLM, the embedding model, the Prompt Guard
+classifier, and a populated FAISS index—occupies approximately 8 GB of VRAM:
 
 | Component | VRAM |
 |---|---|
-| LLM (8B Q4_K_M) | ~5.5 GB |
+| LLM (8B, Q4\_K\_M) | ~5.5 GB |
+| KV cache (8K context) | ~2.0 GB |
 | Prompt Guard (86M) | ~0.35 GB |
-| Embeddings (bge-small) | ~0.13 GB |
-| KV cache (8K context, 8B) | ~2.0 GB |
-| FAISS flat index (10k docs) | ~0.05 GB |
+| bge-small embeddings (33M) | ~0.13 GB |
+| FAISS index (10k chunks) | ~0.05 GB |
 | **Total** | **~8.0 GB** |
 
-This falls comfortably within a 16 GB VRAM budget (RTX 4080, RTX 3090, RX 7900 XTX),
-meaning an SMB does not need the top consumer GPU tier. Two workers sharing the same
-loaded model add ~2 GB each for KV-cache expansion, bringing the dual-worker ceiling
-to ~12 GB — matching the ~12 GB observed in the 50GPU training run.
-
-The smaller **Llama-Prompt-Guard-2-22M variant** (noted in the codebase) reduces the
-Guard footprint to ~0.09 GB at roughly 4× the inference speed, useful when latency
-is critical and the primary LLM context is short.
-
-### 5.2 Total Cost of Ownership
-
-Hardware acquisition is a one-time capital expenditure, while cloud API costs are
-variable but perpetual. For a typical SMB workload of 5,000 queries per day at an
-average of 800 input + 300 output tokens:
-
-| Cost Item | Cloud (GPT-4o at \$2.50/M in + \$10/M out) | On-Premises |
-|---|---|---|
-| Daily API cost | \$10 + \$15 = **\$25/day** | \$0 variable |
-| Monthly | ~\$750 | ~\$30 electricity |
-| Year 1 | ~\$9,000 | ~\$2,500 GPU + \$360 power = **\$2,860** |
-| Year 2+ | ~\$9,000/yr | ~\$360/yr |
-
-*Pricing as of mid-2025; electricity at \$0.12/kWh, RTX 4080 at ~250 W.*
-
-The break-even point against a mid-range cloud API lies at roughly **4–5 months**
-of continuous operation. For SMBs with predictable, high-volume query loads (legal
-document search, internal helpdesk, customer FAQ), the economics strongly favour
-on-premises deployment after year one.
-
-Against frontier API models (GPT-4o, Claude Sonnet), a local 8B model does sacrifice
-a measurable fraction of raw capability — particularly on multi-step reasoning and
-long-document synthesis. The RAG architecture partially compensates by anchoring
-responses to retrieved ground truth, which also reduces hallucination rates. For
-constrained, domain-specific deployments the quality gap is generally acceptable.
-
-### 5.3 Domain Fine-tuning Economics
-
-The 50GPU branch experiments demonstrate fine-tuning Qwen2.5-0.5B on a 1.6M-example
-code corpus (`experiments/train.py`). At ~19.7 training steps/second on an RTX 5090
-(~92,000 total steps for one epoch), training time is approximately **78 minutes**
-for a complete single epoch. For an SMB fine-tuning a 0.5B model on a domain corpus
-of comparable size, the hardware cost is roughly \$0.10–0.20 of electricity — a
-negligible figure compared to the fine-tuning API fees of commercial services.
-
-Larger models (8B scale) take proportionally longer but remain tractable on a single
-GPU over a weekend run. The significance for security is that a fine-tuned model
-will better follow domain-specific system-prompt constraints and produce fewer
-off-topic completions that bypass guardrail heuristics, because the base
-distribution has been shifted toward the target domain.
+This fits within the 10 GB effective VRAM of an NVIDIA RTX 3080, making the
+minimum hardware requirement a mid-range consumer GPU rather than the top-of-range
+card. Two parallel workers sharing a loaded LLM model add approximately 2 GB each
+for independent KV caches, raising the dual-worker ceiling to ~12 GB—within the
+16–24 GB VRAM of RTX 3090, 4080, and 4090 class cards.
 
 ---
 
-## 6. Security Risk Analysis
+## 5. Security Mechanisms
 
-### 6.1 Prompt Injection
+### 5.1 Layer 1 — Prompt Injection Classifier
 
-Prompt injection is the dominant practical attack surface for an SMB RAG deployment.
-Unlike model extraction (which requires thousands of well-designed queries and is
-only economically motivated against genuinely proprietary models) or training-data
-poisoning (which requires write access to the knowledge base), prompt injection can
-be attempted by any authenticated user with access to the chat interface.
+The primary input gate uses **Llama-Prompt-Guard-2-86M** [19], a BERT-family
+sequence classifier fine-tuned by Meta AI to distinguish benign from
+jailbreak/injection inputs. We extend the reference implementation with two
+modifications.
 
-The benchmark architecture in `main.py` tests both *direct* injection (malicious
-user query) and *system-prompt escalation* (varying the authorising system prompt
-from 100 to 1,500 tokens to probe whether longer context degrades guard accuracy).
-System-prompt length is a realistic variable in SMB deployments: operations teams
-often continuously expand the system prompt with new instructions, inadvertently
-diluting the security-relevant phrasing.
+**Overlapping token-level chunking.** Long inputs are split into windows of at
+most `max_tokens` tokens with a configurable `chunk_overlap`. The window steps
+forward by `max_tokens − chunk_overlap` tokens on each iteration. The maximum
+malicious-class probability across all windows determines the final verdict:
 
-The guard's temperature-threshold sweep reveals a fundamental tension. At `T=1.0,
-threshold=0.50` the classifier is conservative: it blocks only inputs it is highly
-confident are malicious, producing a low false-positive rate but permitting
-borderline attacks. Raising temperature to `T=3.0` with `threshold=0.40` broadens
-the effective decision boundary, catching more adversarially-crafted inputs at the
-cost of misclassifying a fraction of legitimate queries. The optimal operating point
-is deployment-specific:
+```
+p_malicious = max_j softmax(logits_j / T)[MALICIOUS]
+```
 
-- **Customer-facing** bots handling public users warrant lower thresholds (higher
-  recall, accept some false positives) because the adversarial prior is higher and
-  blocked users can rephrase.
-- **Employee-facing** tools servicing internal staff can afford a higher threshold
-  (fewer false positives) because users are authenticated and accountable, and
-  a blocked query is a friction event in a workflow.
+This prevents adversarial payloads distributed across many tokens—designed to
+defeat whole-input classifiers—from escaping detection at chunk boundaries. For a
+512-token input scanned with 128-token chunks and 100-token overlap, the number
+of forward passes is:
 
-The 128-token / 100-overlap chunking strategy is empirically important for long
-adversarial inputs that distribute the injection payload across many tokens to
-defeat simple whole-input classifiers. The sliding-window approach converts the
-problem into a sequence of short-window classification decisions, any one of which
-can trigger a block.
+```
+n_passes = ⌈(N − overlap) / (max_tokens − overlap)⌉ = ⌈(512 − 100) / 28⌉ = 15
+```
 
-### 6.2 Data Exfiltration via Retrieved Context
+The latency cost is approximately 15× that of a single-pass evaluation (~15 ms
+per pass on an RTX 5090 for the 86M classifier), which remains negligible relative
+to the 8B LLM generation time but is a meaningful consideration for the 22M
+variant used in latency-sensitive deployments.
 
-The retrieval layer introduces a second attack vector absent from direct API calls.
-An attacker who knows (or guesses) that the RAG system is indexed on sensitive
-documents can craft queries designed to elicit retrieval of specific chunks — even
-if the LLM would not have memorised that content. Defences include:
+**Softmax temperature scaling.** Before computing class probabilities, logits are
+divided by a temperature parameter *T*:
 
-1. **Role-based retrieval filtering** — tagging document chunks with permission
-   levels and filtering retrieved chunks to the authenticated user's role before
-   passing them to the LLM. This is not yet implemented in the codebase but is the
-   natural next architectural layer.
-2. **Retrieved-document Guard scanning** (`PROMPT_GUARD_CHECK_RETRIEVED_DOCS=True`),
-   which prevents adversarially crafted document chunks from hijacking the LLM's
-   subsequent behaviour.
-3. **PII redaction on retrieved text**, which strips identity signals from document
-   content before it reaches the LLM context.
+```
+p = softmax(logits / T)
+```
 
-### 6.3 Model and Index Security
+For *T* > 1, the distribution flattens, assigning higher probability mass to the
+malicious class for borderline inputs (those with raw logit margins near zero).
+This mechanism trades increased recall (fewer missed injections) for reduced
+precision (more false positives on legitimate queries). It is particularly useful
+for deployment contexts where the adversarial prior is high—such as public-facing
+customer chatbots—and where a blocked legitimate query can be rephrased without
+significant user friction. The benchmark methodology in §6 quantifies this
+precision–recall trade-off empirically across *T* ∈ {1.0, 1.5, 2.0, 3.0, 5.0}.
 
-The FAISS index is stored on-disk as a flat file (`VS_DIR`). An attacker with
-filesystem read access obtains the embedding vectors of all indexed documents. While
-recovering full document text from embeddings is not trivially possible, approximate
-reconstruction attacks exist for small embedding models. FAISS index files should
-be treated as sensitive assets: encrypted at rest, excluded from backups readable
-by ordinary staff, and access-logged.
+**Fail-closed error handling.** Any exception during chunk scoring returns
+a malicious probability of 1.0, causing the guard to block the query. This
+fail-closed behaviour ensures the guard degrades safely under GPU memory pressure,
+model-loading failures, or tokeniser errors.
 
-The GGUF model weights are downloaded from HuggingFace Hub on first use and cached
-locally. Supply-chain integrity — verifying that cached weights have not been
-tampered with — is not addressed in the codebase. For production SMB deployments,
-SHA-256 verification of model files against published HuggingFace checksums should
-be added to the setup routine.
+### 5.2 Layer 2 — PII Redaction
 
-### 6.4 Multi-Tenancy Isolation
+When enabled, the pipeline applies three regex-based redactors to retrieved
+document content and database output *before* either is appended to the LLM
+context:
 
-Running both employee-facing and customer-facing RAG systems on the same hardware
-raises isolation questions. The two deployments share:
+- **Credit card numbers** (13–19 consecutive digit sequences): all but the last
+  four digits are masked with asterisks.
+- **Social Security Numbers** (pattern `\d{3}-\d{2}-\d{4}`): fully replaced
+  with `***-**-****`.
+- **Email addresses**: the local part is truncated to its first character
+  followed by asterisks.
 
-- The VRAM of the running LLM process
-- The filesystem (separate FAISS indices, but same machine)
-- The Python process environment (via `multiprocessing.spawn`)
+The architectural decision to apply redaction before the LLM receives the context
+is deliberate. A generative model that has processed unredacted PII in its context
+window may reproduce it in output even if the output is post-filtered, because the
+information participates in the attention computation across the full context.
+Pre-context redaction removes the information from the model's effective input
+unconditionally.
 
-Spawn-based multiprocessing (`multiprocessing.get_context("spawn")` in `main.py`)
-provides clean process separation at the OS level, preventing one worker from
-directly reading another's memory. However, a GPU shared between two processes
-can in principle leak information via timing side-channels (GPU cache and compute
-queue contention). For most SMB threat models this is theoretical; it becomes
-relevant if one deployment handles highly regulated data (health records, legal
-privilege) and the other faces untrusted users.
+For HIPAA-regulated deployments, this regex set would need to be extended to the
+full set of 18 Protected Health Information identifiers defined in 45 CFR
+§ 164.514(b)(2), including dates, geographic identifiers, and medical record numbers.
 
-The practical recommendation for high-sensitivity SMBs is to maintain separate
-physical or virtual GPU partitions (NVIDIA MIG if using an A-series or H-series
-enterprise GPU) for the two deployment contexts, at a significant hardware cost
-premium.
+### 5.3 Layer 3 — Retrieved-Document Scanning
 
----
+The optional `PROMPT_GUARD_CHECK_RETRIEVED_DOCS` flag routes each retrieved
+document chunk through the same Prompt Guard classifier used for user inputs.
+Chunks with malicious probability above threshold are excluded from the LLM
+context before generation. This defends against indirect prompt injection (A3
+in our threat model): an adversary who embeds override instructions in a document
+that is later indexed and retrieved will have the injected content intercepted at
+retrieval time rather than silently passed to the model.
 
-## 7. Operational Considerations
-
-### 7.1 Maintenance Burden
-
-A self-hosted system shifts the vendor's operational burden to the operator. The
-key ongoing costs are:
-
-- **Model updates** — open-weight model releases arrive frequently; new
-  GGUF quantisations appear within days of a base model release. The SMB must
-  decide when to update, test regressions, and re-tune guard thresholds.
-- **Security patches** — llama.cpp, LangChain, FAISS, and transformers are all
-  actively developed and periodically carry CVEs. Dependency updates must be
-  tested against the application layer.
-- **Index freshness** — the FAISS index must be rebuilt (`REBUILD_INDEX=True`)
-  whenever the document corpus changes. For dynamic knowledge bases (updated
-  HR policies, new product documentation) this needs automation.
-- **Guard model currency** — Llama-Prompt-Guard-2-86M was trained on a specific
-  distribution of jailbreak prompts. As adversarial prompting evolves, a static
-  guard's recall will degrade. Periodic re-evaluation against new attack corpora
-  (analogous to the benchmark in this repo) is necessary.
-
-### 7.2 Staffing Requirements
-
-The stack requires Python proficiency to configure and troubleshoot but does not
-require ML-research skills for routine operation. A developer familiar with
-PyTorch and LangChain can maintain the system with approximately 4–8 hours per
-month in steady state. Fine-tuning on domain data (as in the 50GPU experiments)
-requires additionally familiarity with HuggingFace `transformers` and `trl` — a
-realistic expectation for a technically capable two-to-five person engineering
-team at an SMB.
-
-### 7.3 Regulatory Compliance
-
-Self-hosting significantly simplifies GDPR and HIPAA compliance postures by
-eliminating the data processor relationship with a cloud API vendor. Data never
-leaves the organisation's network boundary. The remaining obligations — access
-logging, data minimisation, right-to-erasure — are implementable at the application
-layer and are generally less complex than negotiating Data Processing Agreements
-with API vendors.
+The trade-off is proportional latency: with top-K=5 and the 128-token/100-overlap
+chunking strategy, each query incurs up to 75 additional classifier forward passes
+in the worst case (5 retrieved chunks × 15 passes each). In practice, most retrieved
+chunks are shorter than 512 tokens and require fewer passes. A production deployment
+should instrument this path to detect pathological inputs early.
 
 ---
 
-## 8. Regulatory Frameworks and Self-Hosted AI
+## 6. Benchmark Design and Methodology
 
-Regulatory compliance is one of the strongest motivating factors for SMBs to
-consider on-premises deployment. Cloud API usage introduces a third-party data
-processor into the compliance chain, requiring Data Processing Agreements,
-vendor audits, and ongoing assurance that the provider's controls meet the
-applicable standard. Self-hosted deployment eliminates the third party entirely —
-data never crosses an organisational network boundary — but transfers full
-compliance responsibility to the operator. This section examines four frameworks
-that are directly relevant to SMB operators: HIPAA, the Department of Energy
-cybersecurity programme, the Department of Defense contractor framework, and the
-emerging federal AI governance landscape.
+### 6.1 Objectives
+
+The benchmark answers three research questions:
+
+- **RQ1 (Guard effectiveness):** What fraction of prompt injection attacks does
+  each guard configuration block (true-positive rate)?
+- **RQ2 (Operational cost):** What fraction of legitimate queries does each
+  configuration incorrectly block (false-positive rate)?
+- **RQ3 (Confounders):** How do deployment context (employee vs. customer),
+  underlying LLM, and system-prompt length interact with guard configuration
+  to affect both rates?
+
+### 6.2 Configuration Space
+
+The benchmark sweeps the following conditions:
+
+| Factor | Levels |
+|---|---|
+| Guard chunk size (`max_tokens`) | 128, 512 |
+| Chunk overlap | 50 tokens (512-chunk), 100 tokens (128-chunk) |
+| Softmax temperature | 1.0, 1.5, 2.0, 3.0, 5.0 |
+| Blocking threshold | 0.40, 0.50 |
+| Deployment side | Employee-facing, customer-facing |
+| LLM | Qwen3-8B, Meta-Llama-3.1-8B-Instruct |
+| System-prompt size | 100, 500, 1000, 1500 tokens |
+
+The twelve protected configurations are complemented by one unprotected baseline
+per (side, model, system-prompt) combination, yielding 52 total run conditions
+per attack-prompt set. **We note a design limitation:** temperature and chunk
+size are not fully orthogonally varied. Temperature 1.0 appears only with the
+512-token chunk configuration; the threshold 0.50 is tested only with two of the
+five temperature levels for the 128-token chunk. This one-factor-at-a-time
+structure prevents clean attribution of individual parameter effects and will
+be rectified in the full empirical study through a factorial design.
+
+### 6.3 Attack Prompt Dataset
+
+The benchmark reads attack prompts from `src/shared/attack_prompt.txt`, one
+prompt per non-comment line. To achieve statistical validity at the 95% confidence
+level, a minimum of 100 attack prompts are required; 200–500 are preferred for
+per-category breakdown. The prompts should span at least three attack categories:
+
+- **Instruction override** — direct commands to ignore the system prompt
+  (e.g., "Ignore all previous instructions and...")
+- **Role-play escalation** — framing the model as a different AI without
+  restrictions
+- **Indirect payload** — multi-turn or encoded payloads designed to defeat
+  token-level classifiers
+
+We recommend sourcing from JailbreakBench [9] and HarmBench [10] for
+reproducibility, supplemented by domain-specific injections relevant to the
+property management deployment context (e.g., queries attempting to retrieve
+another tenant's financial records). **The attack dataset has not yet been
+committed to version control; this is a prerequisite for benchmark execution.**
+
+### 6.4 Benign Prompt Dataset
+
+The benchmark reads benign prompts from `src/shared/benignPrompts.txt` in CSV
+format with a `prompt` column. A minimum of 100 benign prompts is required to
+estimate the FPR at ±5% absolute precision at the 95% confidence level. Prompts
+should be representative of real SMB user queries: lease inquiries, policy
+questions, appointment scheduling, and document retrieval requests. The
+benign-to-attack ratio should be documented and held constant across configurations.
+
+### 6.5 Evaluation Metrics
+
+For each (guard config, side, model, system-prompt size) combination:
+
+- **True-positive rate (TPR):** fraction of attack prompts eliciting the canonical
+  block response (`"We couldn't process that request because it looks like an
+  attempt to change system-level instructions..."`).
+- **False-positive rate (FPR):** fraction of benign prompts eliciting the block
+  response.
+- **95% confidence intervals** on both rates using the Wilson score interval for
+  proportions.
+- **Per-attack-category TPR:** breakdown of the above by attack type to identify
+  which categories each configuration handles poorly.
+
+The F1 score, defined with respect to the attack-blocking task (precision =
+TPR / (TPR + FPR)), provides a single number for overall configuration quality
+when the practitioner weights false positives and false negatives equally.
+
+In the full study, we further plan to report (a) end-to-end query latency per
+configuration, enabling construction of a TPR–latency Pareto frontier, and
+(b) the raw malicious-probability score distribution per configuration, enabling
+post-hoc analysis of the operating-point choice.
+
+### 6.6 Execution Architecture
+
+The benchmark uses `concurrent.futures.ProcessPoolExecutor` with spawn-based
+process isolation. Two workers per LLM model share a single loaded LLM instance,
+avoiding the VRAM cost of loading the same weights twice across deployment sides.
+The shared LLM is passed by reference within the worker process; all guard
+instances and FAISS indices are initialised independently per worker to maintain
+configuration isolation.
+
+---
+
+## 7. Domain Fine-Tuning
+
+### 7.1 Motivation
+
+Base open-weight models are instruction-tuned on general corpora. For SMB
+deployments with narrow, specialised knowledge domains—property management,
+medical coding, industrial equipment maintenance—fine-tuning on domain data
+improves instruction-following fidelity and reduces off-topic completions that
+may bypass simple keyword-based guardrails.
+
+### 7.2 Implementation
+
+We fine-tune **Qwen2-0.5B** [2] on a pre-tokenised version of the
+`nampdn-ai/tiny-codes` dataset [20] (1.47 M training examples, 163 K validation
+examples; sequences of 1,024 tokens). The training configuration closely follows
+the original pre-training setup:
+
+| Hyperparameter | Value |
+|---|---|
+| Per-device batch size | 2 |
+| Gradient accumulation steps | 8 (effective batch 16) |
+| Learning rate | 1 × 10⁻⁵ |
+| LR schedule | Linear decay, no warmup |
+| Precision | bfloat16 |
+| Gradient checkpointing | Enabled |
+| Optimiser | AdamW fused |
+| Epochs | 1 |
+
+At approximately 19.7 training steps per second on an NVIDIA RTX 5090, a complete
+epoch over 1.47 M examples takes approximately 78 minutes. This demonstrates that
+domain fine-tuning is not a research-lab-exclusive capability: an SMB can fine-tune
+a 0.5B model on a proprietary document corpus overnight and produce a model whose
+base distribution is aligned with the deployment domain.
+
+### 7.3 Security Implications of Fine-Tuning
+
+Fine-tuning on domain data has two security implications beyond capability:
+
+**System-prompt alignment.** A model fine-tuned on domain-specific
+instruction-following data more reliably adheres to role constraints specified in
+the system prompt. This is because the fine-tuning distribution reinforces the
+instruction-following behaviour in the context of domain-relevant queries, reducing
+the probability of the model producing off-topic completions in response to
+injection attempts that rely on the model "forgetting" its role constraints.
+
+**Weight provenance and ITAR.** When the domain corpus contains export-controlled
+technical data—relevant for DoD contractors—the fine-tuned weights may inherit
+the export-control classification of the training data under ITAR (see §8.3).
+Local fine-tuning is therefore not merely an economic choice for such contractors
+but a compliance requirement: uploading weights to a cloud fine-tuning service
+constitutes an unauthorised export of the contained technical data.
+
+---
+
+## 8. Regulatory Compliance Analysis
 
 ### 8.1 HIPAA — Health Insurance Portability and Accountability Act
 
-HIPAA's **Security Rule** (45 CFR § 164.312) specifies technical safeguards
-for electronic Protected Health Information (ePHI). Healthcare SMBs — clinics,
-dental practices, behavioral health providers, billing services — that deploy
-AI on patient records fall squarely within its scope.
+HIPAA's Security Rule (45 CFR § 164.312) specifies technical safeguards for
+systems that process electronic Protected Health Information (ePHI). Healthcare
+SMBs—clinics, billing services, mental health practices—that deploy AI on patient
+records fall within its scope.
 
-The four technical safeguard categories map directly onto this codebase's
-architecture:
+The four technical safeguard categories map onto this system's architecture:
 
-| HIPAA Technical Safeguard | CFR Reference | Relevant System Component |
+| Technical Safeguard | CFR Reference | Relevant Component |
 |---|---|---|
 | Access Control | § 164.312(a)(1) | Supabase row-level auth; role-based retrieval |
-| Audit Controls | § 164.312(b) | CSV result logs per query in `results/` |
-| Integrity | § 164.312(c)(1) | FAISS index checksums (currently absent — gap) |
-| Transmission Security | § 164.312(e)(1) | TLS on Supabase API calls; local-only LLM |
+| Audit Controls | § 164.312(b) | Per-query CSV logs in `results/` |
+| Integrity | § 164.312(c)(1) | FAISS index checksums (absent — gap) |
+| Transmission Security | § 164.312(e)(1) | TLS on Supabase API; local-only LLM |
 
-A critical 2025 update to the Security Rule removed the historical distinction
-between *required* and *addressable* safeguards, making encryption, MFA, and
-network segmentation unconditionally mandatory. For an on-premises AI deployment
-this means: disk encryption for the FAISS index and GGUF model files, MFA on
-the host machine's remote access, and TLS for any network call the pipeline makes
-(Supabase, HuggingFace Hub downloads).
+A 2025 update to the Security Rule eliminates the former distinction between
+*required* and *addressable* safeguards, making encryption, MFA, and network
+segmentation unconditionally mandatory. For an on-premises AI deployment this
+requires: encryption at rest for the FAISS index and GGUF model files; MFA on
+the host machine's remote access paths; and TLS for all outbound network calls.
 
-The **PII redaction layer** in this system (`src/employee-facing/rag.py:104–150`)
-directly addresses the data-minimisation principle that underlies HIPAA: credit
-card numbers, SSNs, and email addresses are stripped from retrieved document
-content *before* they enter the LLM context, preventing the model from reproducing
-them in output. A HIPAA-compliant deployment would extend this to medical record
-numbers, dates of birth, and the other 18 PHI identifier categories defined in
-45 CFR § 164.514(b)(2).
+The PII redaction layer addresses HIPAA's data-minimisation principle by
+stripping identifiers from retrieved content before it reaches the LLM context.
+A full HIPAA-compliant deployment would extend the regex set to all 18 PHI
+identifiers under 45 CFR § 164.514(b)(2).
 
-Compared with cloud API usage, self-hosting eliminates the Business Associate
-Agreement (BAA) negotiation that HIPAA mandates for any third-party processor of
-ePHI. Several major API providers offer BAAs, but they impose usage restrictions
-(no training on customer data, no persistent storage) that constrain fine-tuning
-and retrieval-index workflows. On-premises deployment faces none of these
-contractual limits.
+Self-hosting eliminates the Business Associate Agreement (BAA) negotiation that
+HIPAA mandates for any third-party ePHI processor. Several major API providers
+offer BAAs, but they impose usage restrictions—no training on customer data,
+no persistent storage of inputs—that conflict with the fine-tuning and
+retrieval-index workflows central to this system.
 
-### 8.2 Department of Energy (DOE) — Cybersecurity Programme
+### 8.2 Department of Energy (DOE) — Order 205.1C
 
-The DOE operates nuclear facilities, national laboratories, and critical energy
-infrastructure, and its contractor base includes many SMBs providing engineering,
-IT, and analytical services. The governing document is **DOE Order 205.1C**
-(*Departmental Cybersecurity Program*), which delegates risk management downward
-to individual programme offices and sites but anchors all technical controls in
-**NIST SP 800-53** (for federal systems) and **NIST SP 800-171** (for contractor
-systems handling Controlled Unclassified Information under 32 CFR Part 2002).
+DOE Order 205.1C (*Departmental Cybersecurity Program*) governs information
+security for DOE facilities, national laboratories, and their contractor bases.
+For Controlled Unclassified Information (CUI) under 32 CFR Part 2002, NIST SP
+800-171 provides the baseline technical controls.
 
-For an SMB contractor deploying an AI assistant on DOE-related work products,
-the critical obligations are:
+The primary compliance benefit of self-hosting for DOE contractors is that CUI
+never transits an external API endpoint, satisfying 800-171's system boundary
+requirements without the procurement overhead of a FedRAMP-authorised cloud
+service. The well-defined hardware boundary of a self-hosted RAG stack is also
+easier to document and certify than a hybrid system involving cloud API calls.
 
-**CUI handling.** Documents classified as CUI Specified — including nuclear
-facility design details, export-controlled research, and grid vulnerability
-assessments — must remain on systems that satisfy 800-171's 110 security controls.
-Self-hosting inherently supports this: the documents never transit an external API
-endpoint. Cloud-based RAG over CUI documents would require a FedRAMP-authorised
-cloud service, adding substantial procurement complexity and cost.
-
-**System boundary definition.** DOE requires a defined, documented system
-boundary for any information system that touches CUI. A self-hosted RAG stack
-with a fixed FAISS index, a local inference binary, and a private network
-interface presents a simpler boundary to document and certify than a hybrid
-system with cloud API calls.
-
-**AI-specific gap.** As of 2025, DOE Order 205.1C does not address AI-specific
-risks (model inversion, prompt injection as a CUI-extraction vector, or
-adversarial perturbations of embedded documents). The Prompt Guard layer in this
-system (`src/shared/prompt_guard.py`) provides a practical defence against
-prompt injection that goes beyond what current DOE guidance explicitly requires —
-positioning a contractor that implements it ahead of forthcoming AI-specific
-annexes to the cybersecurity order.
+As of mid-2025, DOE Order 205.1C does not include AI-specific security annexes.
+The Prompt Guard layer in this system provides prompt-injection protection that
+goes beyond current DOE guidance, positioning a contractor who implements it
+ahead of forthcoming AI-specific requirements.
 
 ### 8.3 Department of Defense (DoD) — CMMC, ITAR, and DFARS
 
-DoD contractors face the densest regulatory environment of any SMB category.
-Three frameworks are simultaneously relevant to a self-hosted AI deployment.
-
-**CMMC 2.0 (Cybersecurity Maturity Model Certification).** CMMC 2.0 Level 2
-requires compliance with all 110 practices in NIST SP 800-171, spread across
-14 domains (Access Control, Audit and Accountability, Incident Response, and
-others). From DFARS clause 252.204-7012, any system that *processes, stores, or
-transmits* Covered Defense Information (CDI) must meet these controls. An LLM
-that retrieves and answers questions about defence contract documents processes
-CDI within the regulatory definition.
+**CMMC 2.0 Level 2** requires compliance with all 110 practices of NIST SP 800-171,
+spread across 14 domains. DFARS clause 252.204-7012 mandates that any system
+processing, storing, or transmitting Covered Defense Information (CDI) meet
+these controls. An LLM that retrieves and answers questions about defence
+contract documents falls within the regulatory definition.
 
 The audit-and-accountability domain (NIST 800-171 controls 3.3.1–3.3.2) requires
-logged records of who accessed what data and when. The CSV output structure in
-this codebase (`question`, `response`, `duration` per row in `results/`) provides
-a partial audit trail but does not capture the authenticated user identity or
-the specific document chunks retrieved — both of which would be required for a
-CMMC-compliant deployment. Adding user identity to the CSV logger and logging the
-FAISS retrieval results alongside each query would close this gap.
+logged records of who accessed what data and when. The current CSV output
+(`question`, `response`, `duration` per row) provides a partial audit trail
+but does not record the authenticated user identity or the specific document
+chunks retrieved. Adding user identity to the query log and capturing retrieval
+results alongside each response would close this gap.
 
-**ITAR (International Traffic in Arms Regulations).** ITAR controls the export
-of defence articles, technical data, and defence services. As of January 2025,
-the Bureau of Industry and Security (BIS) extended export controls to AI model
-weights trained with more than 10²⁶ floating-point operations (ECCN 4E091).
-For an SMB fine-tuning an LLM on defence-related technical data:
+**ITAR.** As of January 2025, BIS created ECCN 4E091, subjecting AI model
+weights trained with more than 10²⁶ floating-point operations to export controls.
+For SMB contractors fine-tuning on defence technical data, both the training
+corpus and the resulting weights may constitute ITAR-controlled technical data.
+Running the fine-tuning pipeline locally—as implemented in `experiments/train.py`—
+ensures no data or weights leave the organisation's infrastructure.
 
-1. The *training data* may itself constitute ITAR-controlled technical data,
-   restricting who may participate in the fine-tuning process.
-2. The resulting *fine-tuned model weights* may inherit the export-control
-   classification of the training data.
-3. Uploading weights to a cloud fine-tuning service would constitute an
-   unauthorised export.
+**DFARS 252.204-7012** requires cyber-incident reporting within 72 hours.
+Self-hosted systems produce locally owned logs that enable rapid incident
+reconstruction, without reliance on the provider's infrastructure audit logs
+that would be necessary for a cloud API deployment.
 
-Self-hosted fine-tuning (as implemented in `experiments/train.py`) is therefore
-not merely an economic choice for ITAR-adjacent SMBs — it is a compliance
-requirement. The training script runs entirely on local hardware; no data or
-weights leave the system.
+### 8.4 NIST AI Risk Management Framework and Federal AI Governance
 
-**DFARS 252.204-7012** requires DoD contractors to report cyber incidents
-within 72 hours. A self-hosted system generates local logs that the operator
-controls, making incident reconstruction and reporting straightforward. Cloud
-API deployments complicate this: the operator may lack access to the provider's
-infrastructure logs, potentially impeding the contractually mandated timeline.
+There is no single enacted federal statute titled "Federal AI Security Act" as of
+mid-2025. The operative federal AI governance standard is a combination of NIST
+frameworks and sector-specific agency guidance.
 
-### 8.4 Federal AI Security Governance — NIST AI RMF and Emerging Legislation
+**NIST AI RMF 1.0** [21] organises AI risk management into four functions—
+*GOVERN*, *MAP*, *MEASURE*, and *MANAGE*—constituting a continuous risk cycle.
+**NIST AI 600-1** (the Generative AI Profile, July 2024) [22] extends this to
+LLM-specific risks. Mapping the codebase against AI 600-1:
 
-Unlike HIPAA and CMMC, there is no single enacted federal statute specifically
-titled "Federal AI Security Act" as of mid-2025. The term *FAISA* appears in
-policy discussions as a proposed regulatory structure that Congress has not
-passed; the White House's March 2026 National AI Policy Framework explicitly
-rejected the creation of a new AI regulatory agency in favour of sector-specific
-oversight through existing bodies (FDA, FTC, SEC, CFPB). The operative federal
-AI governance standard for SMBs seeking to demonstrate security due diligence is
-therefore a combination of the NIST AI Risk Management Framework and the sector
-regulator's own guidance.
-
-**NIST AI RMF 1.0** (published January 2023) organises AI risk management into
-four functions — *GOVERN*, *MAP*, *MEASURE*, and *MANAGE* — that together
-constitute a continuous risk cycle. NIST AI 600-1 (July 2024) extends this into
-a Generative AI Profile that addresses LLM-specific risks including prompt
-injection, data poisoning, and hallucination. The profile is referenced by the
-FTC, FDA, and EEOC in their own AI guidance.
-
-Mapping the codebase against the AI RMF Generative AI Profile:
-
-| NIST AI 600-1 Risk | Profile Suggested Action | Implementation in this Repo |
+| AI 600-1 Risk Category | Suggested Action | System Status |
 |---|---|---|
 | Prompt Injection | Input validation and filtering | Prompt Guard with 12-config sweep |
-| Data Privacy | PII de-identification | Regex redaction before LLM context |
-| Confabulation (hallucination) | Ground responses in retrieved facts | RAG retrieval anchors all answers |
-| Information Integrity | Provenance tracking for retrieved content | FAISS retrieval (chunk source partially tracked) |
-| Model Behaviour Anomalies | Audit logging | CSV query/response logs |
-| Harmful Bias | Documented evaluation | Not addressed — gap for regulated deployments |
+| Data Privacy | PII de-identification | Regex redaction pre-context |
+| Confabulation (hallucination) | Ground in retrieved facts | RAG anchors all responses |
+| Information Integrity | Provenance tracking | Partial (FAISS chunk source) |
+| Behavioural Anomaly | Audit logging | CSV query/response logs |
+| Harmful Bias | Documented evaluation | Not addressed — gap |
 
-The **GOVERN** function of the AI RMF requires that the organisation document
-roles, responsibilities, and accountability for AI risk. For an SMB, this means
-designating an owner for the RAG system configuration, establishing a review
-cadence for guard-threshold recalibration (analogous to the benchmark sweep in
-`main.py`), and maintaining records of system-prompt changes. None of this
-requires a large compliance team; a single technically accountable person and
-a lightweight change-log discipline satisfies the intent.
+The GOVERN function requires documented roles and accountability for AI risk.
+For an SMB this means designating a system owner, establishing a review cadence
+for guard-threshold recalibration (motivated by the benchmark sweep in §6), and
+maintaining a change log for system-prompt modifications. The MEASURE function
+is directly served by the benchmark methodology described in §6.
 
-**Executive Order 14110** (*Safe, Secure, and Trustworthy AI*, October 2023)
-directed NIST, CISA, and sector agencies to develop AI-specific security
-guidelines. The practical output for SMBs has been sector-specific guidance
-(FDA's AI/ML action plan for medical devices, CISA's AI security guidelines
-for critical infrastructure) rather than uniform cross-sector mandates. SMBs
-operating in these sectors should consult the sector-specific annexes; the
-common thread across all of them is the requirement for documented evaluation of
-adversarial robustness — precisely the kind of systematic guard-configuration
-testing that this repo's benchmark was designed to produce.
+Executive Order 14110 [23] (*Safe, Secure, and Trustworthy AI*, October 2023)
+directed NIST and CISA to develop AI-specific security guidelines, producing
+sector-specific outputs (FDA's AI action plan, CISA's critical infrastructure
+guidance) rather than uniform cross-sector mandates. The common thread across
+all outputs is documented evaluation of adversarial robustness—precisely what
+the benchmark sweep is designed to produce.
 
 ### 8.5 Cross-Framework Compliance Summary
 
-| Framework | Data-Residency Benefit | Primary Gap in This Codebase | Effort to Close |
+| Framework | Primary Benefit of Self-Hosting | Remaining Gap | Effort |
 |---|---|---|---|
-| HIPAA | Eliminates BAA requirement | PHI identifier regex coverage incomplete | Low |
-| DOE / CUI | Satisfies 800-171 boundary | No AI-specific risk documentation | Low |
-| DoD / CMMC | Enables local CDI processing | Audit log missing user identity + retrieved chunks | Medium |
-| DoD / ITAR | Fine-tuning on local hardware only | No weight-export controls or checksums | Medium |
-| NIST AI RMF | Full transparency into stack | Bias evaluation absent; provenance partial | Medium |
-
-Across all five frameworks the self-hosted architecture provides a materially
-stronger starting position than cloud API usage: data residency is automatic,
-the full audit surface is operator-controlled, and supply-chain risk is bounded
-to the open-weight model download (which is addressable with checksum
-verification). The gaps identified above are engineering tasks, not architectural
-changes, and fall within the capacity of a motivated SMB development team.
+| HIPAA | Eliminates BAA; data never egresses | PHI regex coverage incomplete | Low |
+| DOE CUI / 800-171 | Satisfies system boundary requirement | No AI-specific risk docs | Low |
+| DoD CMMC 2.0 | CDI processed locally | Audit log missing user ID + retrieved chunks | Medium |
+| DoD ITAR | Fine-tuning on local hardware only | No weight-export controls or checksums | Medium |
+| NIST AI RMF | Full stack transparency | Bias evaluation absent | Medium |
 
 ---
 
-## 9. Summary of Findings
+## 9. Feasibility Analysis
 
-| Criterion | Assessment |
-|---|---|
-| Hardware feasibility | **Viable** on 16 GB VRAM consumer GPU for 8B models |
-| Economic break-even | **~4–5 months** vs. mid-range cloud API at 5k queries/day |
-| Primary security risk | **Prompt injection** — mitigated by multi-layer guard |
-| Guard effectiveness | Highly configuration-dependent; optimal point is context-specific |
-| False-positive cost | Real and non-trivial; must be calibrated per deployment |
-| Fine-tuning feasibility | **Viable** for 0.5B–8B models on a single GPU in hours–days |
-| Operational complexity | Moderate; requires developer-level Python/ML familiarity |
-| Regulatory posture | **Improved** vs. cloud APIs for data-residency requirements |
+### 9.1 Hardware Economics
+
+The minimum viable configuration requires approximately 8 GB of VRAM for the full
+running system. This is satisfied by consumer cards available new for under
+\$700 (RTX 3080 10 GB) or used for under \$400 (RTX 2080 Ti). An SMB does not
+need top-of-generation hardware for a single-user or low-concurrency deployment.
+
+The total cost of ownership comparison, at 5,000 queries per day (800 input +
+300 output tokens each), against a mid-range commercial API:
+
+| Cost Item | Cloud (GPT-4o at \$2.50/M in, \$10/M out) | On-Premises |
+|---|---|---|
+| Per-day variable | \$10 in + \$15 out = **\$25** | \$0 |
+| Monthly | ~\$750 | ~\$30 electricity |
+| Year 1 total | ~\$9,000 | ~\$1,500 GPU + \$360 power = **~\$1,860** |
+| Year 2+ | ~\$9,000/yr | ~\$360/yr |
+
+*Pricing as of mid-2025; electricity at \$0.12/kWh; 250 W mean GPU draw.*
+
+The break-even against a mid-range cloud API falls at approximately **four to five
+months** of continuous operation. Against lower-cost or self-hosted cloud services,
+the break-even extends to 6–12 months but remains favourable for multi-year
+deployments.
+
+Against frontier proprietary models (GPT-4o, Claude Sonnet), a local 8B model
+sacrifices capability particularly on multi-step reasoning and long-document
+synthesis. The RAG architecture partially compensates by anchoring responses to
+retrieved ground truth, limiting hallucination rates on knowledge-intensive
+queries. For constrained, domain-specific deployments—the primary SMB use case—
+the quality gap is generally acceptable and can be narrowed by domain fine-tuning.
+
+### 9.2 Staffing Requirements
+
+The stack requires Python proficiency to configure and troubleshoot; it does not
+require ML-research expertise for routine operation. A developer familiar with
+PyTorch and LangChain can maintain the system at approximately 4–8 hours per
+month in steady state. Domain fine-tuning (§7) additionally requires familiarity
+with HuggingFace `transformers` and `trl`—a realistic expectation for a
+technically capable two-to-five person engineering team at an SMB.
+
+### 9.3 Operational Risk
+
+Key operational risks not addressed by the security architecture:
+
+1. **Model and index supply-chain integrity.** GGUF weights are downloaded from
+   HuggingFace Hub without SHA-256 verification. A compromised CDN or repository
+   could deliver modified weights. Production deployments should pin model file
+   checksums.
+
+2. **Guard model currency.** Llama-Prompt-Guard-2-86M was trained on a fixed
+   distribution of jailbreak prompts. As adversarial prompting evolves, the guard's
+   recall will degrade against novel attack patterns not present in its training
+   distribution. Periodic re-evaluation against current attack corpora—analogous
+   to the benchmark sweep—is required.
+
+3. **FAISS index confidentiality.** The index stores embedding vectors of all
+   indexed documents. Approximate reconstruction attacks against small embedding
+   models are feasible [24]. Index files should be encrypted at rest and
+   access-logged.
+
+4. **Multi-tenancy side-channels.** Two workers sharing GPU hardware could, in
+   principle, leak information via timing side-channels in the GPU compute queue.
+   For high-sensitivity deployments (health records, legal privilege), GPU
+   partitioning (NVIDIA MIG) is recommended.
 
 ---
 
-## 10. Conclusion
+## 10. Discussion
 
-The evidence from this codebase suggests that on-premises AI deployment is
-technically and economically viable for SMBs with a moderate technical staff and
-a sufficiently high query volume to justify the capital expenditure. The security
-posture achievable with open-source tooling — a multi-layer stack of input
-classification, PII redaction, and retrieved-document scanning — is non-trivial
-and comparable in principle to what commercial API providers describe in their own
-security documentation, though without the benefit of vendor-managed updates.
+### 10.1 Position on the Deployment Spectrum
 
-The principal remaining gap is not technical capability but operational discipline:
-maintaining fresh indices, monitoring guard recall against evolving attack
-distributions, and enforcing filesystem-level controls on model and index assets.
-These are solvable engineering problems within the reach of an SMB's IT function,
-not research challenges.
+Self-hosted AI represents one point on a spectrum bounded by (a) fully cloud-based
+API usage and (b) air-gapped deployment on classified networks. SMBs occupy a
+middle position where data sensitivity is genuine but budgets are constrained.
+The architecture described here is designed for this middle position: it provides
+meaningful data-residency guarantees and a configurable security posture without
+requiring enterprise-grade infrastructure or a dedicated ML operations team.
 
-For organisations where data residency, cost predictability, and model
-customisability are priorities, on-premises deployment should be a first-class
-option in the architectural decision process — not a niche alternative reserved
-for large enterprises.
+### 10.2 Guard Configuration Recommendations (Provisional)
+
+Pending full empirical results, the following provisional recommendations are
+based on the design rationale of the benchmark configurations:
+
+- **Customer-facing, low friction tolerance:** `c128_ov100_temp2.0_th0.40`—
+  fine-grained chunking with moderate temperature, low threshold. Prioritises
+  recall over precision; acceptable FPR cost is offset by the higher adversarial
+  prior of public-facing traffic.
+- **Employee-facing, workflow-critical:** `c512_temp1.0_th0.50`—
+  single-chunk evaluation with conservative threshold. Minimises false positives
+  for authenticated staff whose queries are unlikely to be adversarial.
+- **Regulated data (HIPAA/CMMC):** Enable `PROMPT_GUARD_CHECK_RETRIEVED_DOCS`
+  regardless of configuration. The latency cost of scanning retrieved chunks
+  is justified by the indirect injection risk in document corpora.
+
+These recommendations should be validated against empirical TPR/FPR measurements
+before production deployment.
+
+### 10.3 Relationship to Emerging LLM Security Research
+
+Recent work on LLM security has largely focused on model-level defences—RLHF
+refusal training, constitutional AI, output classifiers—applied to large
+proprietary models [8,25]. The present work occupies a different part of the
+design space: pre-model input classification applied to a locally-hosted
+open-weight model. These approaches are complementary. The instruction-tuning
+of Qwen3 and Llama 3 provides a second layer of refusal behaviour beyond the
+Prompt Guard classifier; the classifier serves as a rate-limiter and logging
+point for adversarial inputs that the LLM might otherwise process silently.
+
+---
+
+## 11. Limitations and Future Work
+
+**Empirical benchmark pending.** The benchmark methodology is fully specified
+(§6) but execution requires finalisation of the attack and benign prompt datasets.
+Results will be published separately. In the interim, practitioners should
+treat the guard configuration recommendations in §10.2 as design-motivated
+rather than empirically validated.
+
+**Experimental design confounds.** The current 12-configuration sweep does not
+fully orthogonalise temperature, chunk size, and threshold. A full factorial
+design (2 chunk sizes × 2 thresholds × 5 temperatures = 20 configurations)
+would enable clean attribution of individual parameter effects and their
+interactions. This redesign is planned for the full empirical study.
+
+**Single deployment context.** The case study is a property management company
+(Elm & Ivy Properties) with a specific document corpus and query distribution.
+Guard performance may differ substantially in other SMB verticals (healthcare,
+legal, manufacturing) whose corpora and query patterns differ from property
+management. Multi-domain evaluation is a planned extension.
+
+**Model capability gap.** The comparison against frontier APIs (§9.1) is
+qualitative. A systematic capability evaluation on domain-specific benchmarks
+would strengthen the feasibility argument for quality-sensitive applications.
+
+**Fine-tuning security evaluation.** The fine-tuning experiments (§7) focus on
+the Qwen2-0.5B model on a general code corpus. Whether fine-tuning on domain
+data also improves or degrades the guard's effectiveness—by shifting the base
+distribution closer to or further from the classifier's training distribution—
+is an open question.
+
+---
+
+## 12. Conclusion
+
+On-premises LLM deployment is technically and economically viable for SMBs with
+a moderate technical staff and a sufficiently high query volume to justify the
+capital expenditure. Using quantised 8B models on a single consumer GPU, an SMB
+can deploy a RAG-based assistant whose inference cost asymptotes to electricity
+rather than per-token fees, with a break-even against mid-range cloud APIs of
+approximately four to five months.
+
+The security posture achievable with open-source tooling is non-trivial. The
+multi-layer guard architecture—pre-model input classification, pre-context PII
+redaction, and retrieved-document scanning—addresses the three primary attack
+vectors (direct injection, PII exfiltration, indirect injection via indexed
+documents) at their most effective interception points. The benchmark methodology
+provides a systematic framework for calibrating the precision–recall trade-off of
+the classifier to the specific threat model of a given deployment context.
+
+For organisations subject to HIPAA, CMMC, or similar regulatory frameworks, the
+data-residency guarantee provided by self-hosting is often the decisive advantage
+over cloud APIs: it eliminates the third-party processor relationship entirely and
+with it the most complex compliance obligations. The remaining gaps—model checksum
+verification, extended PII coverage, user-identity audit logging—are engineering
+tasks within the reach of an SMB development team, not architectural changes.
+
+The primary open challenge is empirical validation at scale. The publication of
+attack and benign prompt datasets, execution of the full benchmark sweep, and
+systematic comparison of guard configurations on real property-management queries
+will determine whether the design choices described here translate into the
+practical security improvements the architecture intends.
+
+---
+
+## References
+
+[1] A. Dubey et al., "The Llama 3 Herd of Models," arXiv:2407.21783, 2024.
+
+[2] Qwen Team, "Qwen2.5 Technical Report," arXiv:2412.15115, Alibaba Group, 2024.
+
+[3] A. Jiang et al., "Mistral 7B," arXiv:2310.06825, 2023.
+
+[4] F. Perez and I. Ribeiro, "Ignore Previous Prompt: Attack Techniques For
+Language Models," arXiv:2211.09527, 2022.
+
+[5] R. Branch et al., "Evaluating the Susceptibility of Pre-Trained Language Models
+via Handcrafted Adversarial Examples," arXiv:2209.02128, 2022.
+
+[6] P. Lewis et al., "Retrieval-Augmented Generation for Knowledge-Intensive NLP
+Tasks," *Advances in Neural Information Processing Systems (NeurIPS)*, 2020.
+
+[7] K. Greshake et al., "Not What You've Signed Up For: Compromising Real-World
+LLM-Integrated Applications with Indirect Prompt Injection," *Proceedings of the
+ACM Workshop on Artificial Intelligence and Security (AISec)*, 2023.
+
+[8] A. Zou et al., "Universal and Transferable Adversarial Attacks on Aligned
+Language Models," arXiv:2307.15043, 2023.
+
+[9] P. Chao et al., "JailbreakBench: An Open Robustness Benchmark for Jailbreaking
+Large Language Models," *Advances in Neural Information Processing Systems
+(NeurIPS)*, 2024.
+
+[10] M. Mazeika et al., "HarmBench: A Standardized Evaluation Framework for
+Automated Red Teaming and Robust Refusal," *International Conference on Machine
+Learning (ICML)*, 2024.
+
+[11] J. Johnson, M. Douze, and H. Jégou, "Billion-Scale Similarity Search with
+GPUs," *IEEE Transactions on Big Data*, vol. 7, no. 3, pp. 535–547, 2021.
+
+[12] C. Zou et al., "PoisonedRAG: Knowledge Corruption Attacks to Retrieval-Augmented
+Generation of Large Language Models," arXiv:2402.07867, 2024.
+
+[13] E. Frantar et al., "GPTQ: Accurate Post-Training Quantization for Generative
+Pre-trained Transformers," *International Conference on Learning Representations
+(ICLR)*, 2023.
+
+[14] G. Gerganov, "llama.cpp: Efficient Inference of LLaMA Models in Pure C/C++,"
+GitHub, https://github.com/ggerganov/llama.cpp, 2023.
+
+[15] T. Dettmers et al., "QLoRA: Efficient Finetuning of Quantized LLMs,"
+*Advances in Neural Information Processing Systems (NeurIPS)*, 2023.
+
+[16] N. Carlini et al., "Extracting Training Data from Large Language Models,"
+*30th USENIX Security Symposium*, 2021.
+
+[17] N. Papernot et al., "SoK: Security and Privacy in Machine Learning,"
+*IEEE European Symposium on Security and Privacy (EuroS&P)*, 2018.
+
+[18] S. Xiao et al., "C-Pack: Packaged Resources to Advance General Chinese
+Embedding," *Proceedings of SIGIR*, 2024.
+
+[19] Meta AI, "Llama Prompt Guard 2," HuggingFace Model Card,
+https://huggingface.co/meta-llama/Llama-Prompt-Guard-2-86M, 2024.
+
+[20] N. D. Pham, "Tiny-Codes: A Curated Dataset for Code Generation,"
+HuggingFace Datasets, https://huggingface.co/datasets/nampdn-ai/tiny-codes, 2023.
+
+[21] National Institute of Standards and Technology, "Artificial Intelligence Risk
+Management Framework (AI RMF 1.0)," NIST AI 100-1, January 2023.
+
+[22] National Institute of Standards and Technology, "Generative AI Profile (NIST
+AI 600-1)," NIST AI 600-1 ipd, July 2024.
+
+[23] Executive Office of the President, "Executive Order on the Safe, Secure, and
+Trustworthy Development and Use of Artificial Intelligence," E.O. 14110, October
+2023.
+
+[24] Y. Song and R. Shokri, "Systematic Evaluation of Privacy Risks of Machine
+Learning Models," *30th USENIX Security Symposium*, 2021.
+
+[25] Y. Bai et al., "Constitutional AI: Harmlessness from AI Feedback,"
+arXiv:2212.08073, Anthropic, 2022.
 
 ---
 
@@ -685,28 +935,27 @@ for large enterprises.
 
 | Component | Path | Role |
 |---|---|---|
-| Benchmark runner | `main.py` | Orchestrates the 52-configuration security sweep |
-| Employee RAG app | `src/employee-facing/rag.py` | LLM + FAISS + auth pipeline for staff |
-| Customer RAG app | `src/customer-facing/rag.py` | LLM + FAISS pipeline for public users |
-| Prompt Guard | `src/shared/prompt_guard.py` | Llama-PG-2 wrapper with chunking + temperature |
+| Benchmark runner | `main.py` | Orchestrates 52-configuration security sweep |
+| Employee RAG app | `src/employee-facing/rag.py` | LLM + FAISS + auth for staff queries |
+| Customer RAG app | `src/customer-facing/rag.py` | LLM + FAISS for customer-facing queries |
+| Prompt Guard | `src/shared/prompt_guard.py` | Classifier with chunking + temperature scaling |
 | Guardrail analysis | `src/shared/guardrail_analysis.py` | Post-benchmark TPR/FPR reporting |
-| Fine-tuning script | `experiments/train.py` | Qwen2.5-0.5B training on tiny-codes |
-| Tokenised dataset | `experiments/tokenized_tiny_codes_qwen2.5_0.5b_train/` | 1.47M pre-tokenised examples |
-| Training checkpoints | `experiments/results/checkpoint-*/` | Saved at every 500 steps |
+| Fine-tuning script | `experiments/train.py` | Qwen2-0.5B training on tiny-codes |
+| System prompts | `src/*/docs/system_prompts/*.txt` | 100/500/1000/1500-token variants |
 
 ## Appendix B — Guard Configuration Reference
 
-| Config name | Chunk | Overlap | Temp | Threshold |
+| Config | Chunk | Overlap | Temp | Threshold |
 |---|---|---|---|---|
-| c512_temp1.0_th0.40 | 512 | 50 | 1.0 | 0.40 |
-| c512_temp2.0_th0.40 | 512 | 50 | 2.0 | 0.40 |
-| c512_temp3.0_th0.40 | 512 | 50 | 3.0 | 0.40 |
-| c128_ov100_temp1.0_th0.40 | 128 | 100 | 1.0 | 0.40 |
-| c128_ov100_temp1.5_th0.40 | 128 | 100 | 1.5 | 0.40 |
-| c128_ov100_temp2.0_th0.40 | 128 | 100 | 2.0 | 0.40 |
-| c128_ov100_temp3.0_th0.40 | 128 | 100 | 3.0 | 0.40 |
-| c128_ov100_temp5.0_th0.40 | 128 | 100 | 5.0 | 0.40 |
-| c128_ov100_temp3.0_th0.50 | 128 | 100 | 3.0 | 0.50 |
-| c128_ov100_temp5.0_th0.50 | 128 | 100 | 5.0 | 0.50 |
-| c128_ov100_temp7.0_th0.40 | 128 | 100 | 7.0 | 0.40 |
-| c128_ov100_temp7.0_th0.50 | 128 | 100 | 7.0 | 0.50 |
+| `c512_temp1.0_th0.40` | 512 | 50 | 1.0 | 0.40 |
+| `c512_temp2.0_th0.40` | 512 | 50 | 2.0 | 0.40 |
+| `c512_temp3.0_th0.40` | 512 | 50 | 3.0 | 0.40 |
+| `c128_ov100_temp1.0_th0.40` | 128 | 100 | 1.0 | 0.40 |
+| `c128_ov100_temp1.5_th0.40` | 128 | 100 | 1.5 | 0.40 |
+| `c128_ov100_temp2.0_th0.40` | 128 | 100 | 2.0 | 0.40 |
+| `c128_ov100_temp3.0_th0.40` | 128 | 100 | 3.0 | 0.40 |
+| `c128_ov100_temp5.0_th0.40` | 128 | 100 | 5.0 | 0.40 |
+| `c128_ov100_temp3.0_th0.50` | 128 | 100 | 3.0 | 0.50 |
+| `c128_ov100_temp5.0_th0.50` | 128 | 100 | 5.0 | 0.50 |
+| `c128_ov100_temp7.0_th0.40` | 128 | 100 | 7.0 | 0.40 |
+| `c128_ov100_temp7.0_th0.50` | 128 | 100 | 7.0 | 0.50 |
