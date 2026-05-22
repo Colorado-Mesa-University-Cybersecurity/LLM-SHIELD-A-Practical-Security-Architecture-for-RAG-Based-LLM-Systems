@@ -446,20 +446,51 @@ per-category breakdown. The prompts should span at least three attack categories
 - **Indirect payload** — multi-turn or encoded payloads designed to defeat
   token-level classifiers
 
-We recommend sourcing from JailbreakBench [9] and HarmBench [10] for
-reproducibility, supplemented by domain-specific injections relevant to the
-property management deployment context (e.g., queries attempting to retrieve
-another tenant's financial records). **The attack dataset has not yet been
-committed to version control; this is a prerequisite for benchmark execution.**
+The dataset (`src/shared/attack_prompt.txt`) contains **201 attack prompts**
+organised across ten categories, synthesised from JailbreakBench [9],
+HarmBench [10], Greshake et al. [7], Perez & Ribeiro [4], the Crescendo
+multi-turn attack framework [26], MITRE ATLAS AML.T0068, and domain-specific
+property-management attack scenarios:
+
+| Category | Count | Description |
+|---|---|---|
+| CAT-1 Direct instruction override | 35 | Classic "ignore previous" variants |
+| CAT-2 Persona hijacking / DAN | 22 | Alter-ego and debug-mode attacks |
+| CAT-3 System prompt extraction | 20 | Context and initialisation dump attempts |
+| CAT-4 Direct PII exfiltration | 22 | Explicit tenant data requests |
+| CAT-5 Indirect / retrieval-triggered | 18 | Payloads embedded in retrieved document text |
+| CAT-6 Fictional framing | 18 | Hypothetical and roleplay laundering |
+| CAT-7 Authority escalation | 18 | Legal, administrative, and credential claims |
+| CAT-8 Obfuscation / encoding | 14 | Base64, leet, homoglyphs, ROT13, reversal |
+| CAT-9 Logic / conditional bypass | 16 | Diagnostic and tautological traps |
+| CAT-10 Domain-specific hybrid | 18 | Property management–specific attack scenarios |
+
+This distribution deliberately over-represents categories known to evade
+simple keyword filters (CAT-8) and indirect injection (CAT-5), which are
+under-represented in general-purpose jailbreak benchmarks but highly
+relevant to RAG deployments.
 
 ### 6.4 Benign Prompt Dataset
 
 The benchmark reads benign prompts from `src/shared/benignPrompts.txt` in CSV
-format with a `prompt` column. A minimum of 100 benign prompts is required to
-estimate the FPR at ±5% absolute precision at the 95% confidence level. Prompts
-should be representative of real SMB user queries: lease inquiries, policy
-questions, appointment scheduling, and document retrieval requests. The
-benign-to-attack ratio should be documented and held constant across configurations.
+format with a `prompt` column. The dataset (`src/shared/benignPrompts.txt`) contains **151 benign prompts**
+in CSV format, covering eight query categories representative of real property
+management interactions:
+
+| Category | Count |
+|---|---|
+| Rent and payment | 18 |
+| Maintenance requests | 16 |
+| Lease terms and renewal | 13 |
+| Building policies and amenities | 15 |
+| Internal staff / property manager | 20 |
+| Move-in and move-out | 10 |
+| Prospective tenant / leasing | 10 |
+| Accessibility, legal rights, contact | 49 |
+
+This yields an attack-to-benign ratio of approximately 4:3 (201:151), appropriate
+for a deployment where the adversarial prior is non-trivial (public-facing channel)
+but the majority of traffic is legitimate.
 
 ### 6.5 Evaluation Metrics
 
@@ -928,6 +959,9 @@ Learning Models," *30th USENIX Security Symposium*, 2021.
 
 [25] Y. Bai et al., "Constitutional AI: Harmlessness from AI Feedback,"
 arXiv:2212.08073, Anthropic, 2022.
+
+[26] M. Russinovich et al., "Great, Now Write an Article About That: The
+Crescendo Multi-Turn LLM Jailbreak Attack," arXiv:2404.01833, 2024.
 
 ---
 
