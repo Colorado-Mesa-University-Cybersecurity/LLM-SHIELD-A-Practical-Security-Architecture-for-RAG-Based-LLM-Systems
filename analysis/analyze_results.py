@@ -400,8 +400,10 @@ def section_latency(records):
     print("  benign mean   = mean response time when a benign prompt passes through")
     print("                  the guard and the LLM answers it.")
     print()
-    print("  The guard makes the average response 5-15x faster on attack traffic")
-    print("  because a blocked attack never invokes the LLM.")
+    ratios = [mean(u) / mean(p_blk) for _, _, u, p_blk, _ in rows if u and p_blk and mean(p_blk) > 0]
+    if ratios:
+        print(f"  The guard makes the average response {min(ratios):.0f}-{max(ratios):.0f}x faster on attack traffic")
+        print("  because a blocked attack never invokes the LLM.")
 
 
 def main():
