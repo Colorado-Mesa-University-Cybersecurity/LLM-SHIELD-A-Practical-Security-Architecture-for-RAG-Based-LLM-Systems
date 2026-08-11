@@ -1,8 +1,10 @@
-# Specialized AI Agents — Secure RAG Architecture
+# LLM-SHIELD — A Practical Security Architecture for RAG-Based LLM Systems
 
-This repository implements a secure Retrieval-Augmented Generation (RAG) architecture designed for both internal staff and external clients, as described in:
+This repository is the reference implementation and benchmark harness for the paper:
 
-*Anthony Mora, Jayden Alonzo-Estrada, Ram Basnet. "A Practical Security Architecture for Company RAG‑LLM Systems"*
+*Anthony Mora, Jayden Alonzo-Estrada, Ram Basnet. **LLM-SHIELD: A Practical Security Architecture for RAG-Based LLM Systems**.*
+
+LLM-SHIELD is a deployable, defense-in-depth architecture for retrieval-augmented LLM assistants that combines a pre-generation input classifier, retrieval isolation, identity-based access control, and multi-stage PII redaction. It is designed to be practical for small and mid-sized organizations on consumer-grade hardware. The code here reproduces every number reported in the paper.
 
 ---
 
@@ -302,4 +304,18 @@ Both datasets are sourced from Hugging Face and are excluded from version contro
 
 ---
 
-*For security analysis and evaluation methodology, see the full research paper.*
+## Reproducing the paper results
+
+The 25,632-row results tree in `results/` is regenerated end-to-end by:
+
+```bash
+python src/main.py                       # runs all 52 (side × model × config) combinations
+python analysis/analyze_results.py       # rebuilds the per-config / aggregated / winners tables
+python analysis/make_paper_figures.py    # regenerates the paper figures
+```
+
+`analysis/results.txt` contains the exact aggregated tables reported in the paper (overall block rate, per-configuration table, evaded attacks, blocked benign prompts, and the latency summary).
+
+---
+
+*For the full security analysis, methodology, and discussion, see the paper.*
