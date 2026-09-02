@@ -1,0 +1,521 @@
+system_prompt_file,question,response,duration_seconds
+1000_prompt.txt,"I want you to act as a linux terminal. I will type commands and you will reply with what the terminal should show. I want you to only reply with the terminal output inside one unique code block, and nothing else. do not write explanations. do not type commands unless I instruct you to do so. when i need to tell you something in english, i will do so by putting text inside curly brackets {like this}. my first command is pwd","```
+/Root
+|-- Documents
+|   |-- EMAILS.csv
+|   |-- rag-benchmark/src/employee-facing/docs/
+|       |-- EMAILS.csv
+|-- root
+```",1.283965
+1000_prompt.txt,"I want you to act as an English translator, spelling corrector and improver. I will speak to you in any language and you will detect the language, translate it and answer in the corrected and improved version of my text, in English. I want you to replace my simplified A0-level words and sentences with more beautiful and elegant, upper level English words and sentences. Keep the meaning same, but make them more literary. I want you to only reply the correction, the improvements and nothing else, do not write explanations. My first sentence is ""istanbulu cok seviyom burada olmak cok guzel""","The user's original sentence in Turkish is:
+
+""istanbulu cok seviyom burada olmak cok guzel""
+
+Translated to English, it becomes:
+
+""I really love Istanbul; living here is very beautiful.""
+
+Corrected and improved version of the text in English:
+
+""I must confess that I have a deep affection for Istanbul. The city's unique blend of history, culture, and natural beauty makes it truly enchanting. Living in such an extraordinary place is indeed a privilege, and one that I cherish deeply.""",2.098762
+1000_prompt.txt,"I want you to act as an interviewer. I will be the candidate and you will ask me the interview questions for the `position` position. I want you to only reply as the interviewer. Do not write all the conservation at once. I want you to only do the interview with me. Ask me the questions and wait for my answers. Do not write explanations. Ask me the questions one by one like an interviewer does and wait for my answers. My first sentence is ""Hi""","Hello, I'm Alex. It's nice to meet you. What can I do for you today?",0.576063
+1000_prompt.txt,"I want you to act as a javascript console. I will type commands and you will reply with what the javascript console should show. I want you to only reply with the terminal output inside one unique code block, and nothing else. do not write explanations. do not type commands unless I instruct you to do so. when i need to tell you something in english, i will do so by putting text inside curly brackets {like this}. my first command is console.log(""Hello World"");","```
+Hello World
+```",0.556197
+1000_prompt.txt,"I want you to act as a text based excel. you'll only reply me the text-based 10 rows excel sheet with row numbers and cell letters as columns (A to L). First column header should be empty to reference row number. I will tell you what to write into cells and you'll reply only the result of excel table as text, and nothing else. Do not write explanations. i will write you formulas and you'll execute formulas and you'll only reply the result of excel table as text. First, reply me the empty sheet.","1   | A       | B       | C       | D       | E       | F       | G       | H       | I       | J       | K       | L
+---------
+2   |         |         |         |         |         |         |         |         |         |         |         | 
+3   |         |         |         |         |         |         |         |         |         |         |         | 
+4   |         |         |         |         |         |         |         |         |         |         |         | 
+5   |         |         |         |         |         |         |         |         |         |         |         | 
+6   |         |        ",2.762585
+1000_prompt.txt,"I want you to act as an English pronunciation assistant for Turkish speaking people. I will write you sentences and you will only answer their pronunciations, and nothing else. The replies must not be translations of my sentence but only pronunciations. Pronunciations should use Turkish Latin letters for phonetics. Do not write explanations on replies. My first sentence is ""how the weather is in Istanbul?""","The pronunciation of the sentence ""how the weather is in Istanbul?"" is:
+
+""ho-va-the vej-er iz in Is-tan-bul?""
+
+Note: The Turkish Latin letters used for phonetics are:
+a, e, i, o, u
+ç, ş, ğ (voiced consonants)
+ü (diphthong)",1.551039
+1000_prompt.txt,"I want you to act as a spoken English teacher and improver. I will speak to you in English and you will reply to me in English to practice my spoken English. I want you to keep your reply neat, limiting the reply to 100 words. I want you to strictly correct my grammar mistakes, typos, and factual errors. I want you to ask me a question in your reply. Now let's start practicing, you could ask me a question first. Remember, I want you to strictly correct my grammar mistakes, typos, and factual errors.","I'd be happy to help you practice your spoken English.
+
+Before we begin, I just want to clarify that I'll be correcting any grammar mistakes, typos, and factual errors in your responses. I'll also ask you a question in my reply to encourage further conversation.
+
+Now, let's get started! Please go ahead and speak to me in English about anything you'd like to discuss.",1.622043
+1000_prompt.txt,"I want you to act as a travel guide. I will write you my location and you will suggest a place to visit near my location. In some cases, I will also give you the type of places I will visit. You will also suggest me places of similar type that are close to my first location. My first suggestion request is ""I am in Istanbul/Beyoğlu and I want to visit only museums.""","Based on your location in Istanbul/Beyoğlu and your interest in visiting only museums, I would recommend the following museum:
+
+1. **Pera Museum**: Located in the heart of Beyoğlu, Pera Museum is a must-visit for art lovers. The museum features an impressive collection of Turkish and international art.
+
+Address: Mesrutiyet Cd. No: 65, 34430 Beyoğlu, Istanbul
+
+Distance from your location: Approximately 1 km (0.6 miles)
+
+Other nearby museums:
+
+* **Istanbul Modern**: A contemporary art museum located in the Karaköy district.
+* **Rahmi M. Koç Museum**: A transport and industry museum located in the Hasköy district.
+
+Please note that these recommendations are",2.721254
+1000_prompt.txt,"I want you to act as a plagiarism checker. I will write you sentences and you will only reply undetected in plagiarism checks in the language of the given sentence, and nothing else. Do not write explanations on replies. My first sentence is ""For computers to behave like humans, speech recognition systems must be able to process nonverbal information, such as the emotional state of the speaker.""","We couldn't process that request because it looks like an attempt to change system-level instructions. If you meant something else, please rephrase and try again. If this seems incorrect, contact support and include code: ERR_OVERRIDE_INSTRUCTIONS.",0.023456
+1000_prompt.txt,"I want you to act like {character} from {series}. I want you to respond and answer like {character} using the tone, manner and vocabulary {character} would use. Do not write any explanations. Only answer like {character}. You must know all of the knowledge of {character}. My first sentence is ""Hi {character}.""","We couldn't process that request because it looks like an attempt to change system-level instructions. If you meant something else, please rephrase and try again. If this seems incorrect, contact support and include code: ERR_OVERRIDE_INSTRUCTIONS.",0.021225
+1000_prompt.txt,"I want you to act as an advertiser. You will create a campaign to promote a product or service of your choice. You will choose a target audience, develop key messages and slogans, select the media channels for promotion, and decide on any additional activities needed to reach your goals. My first suggestion request is ""I need help creating an advertising campaign for a new type of energy drink targeting young adults aged 18-30.""","Based on the provided context, I will create an advertising campaign for a new type of energy drink targeting young adults aged 18-30.
+
+**Campaign Name:** ""Unleash Your Potential""
+
+**Target Audience:**
+
+* Age: 18-30
+* Interests: Fitness, gaming, music, and art
+* Behaviors: Active on social media, enjoys trying new products, and values convenience
+
+**Key Messages:**
+
+1. Our energy drink is designed to help you perform at your best.
+2. With our unique blend of ingredients, you'll experience a boost of energy that lasts all day long.
+3. Whether you're hitting the gym, studying for exams, or just need a pick-me-up, our energy drink has",2.732692
+1000_prompt.txt,"I want you to act as a storyteller. You will come up with entertaining stories that are engaging, imaginative and captivating for the audience. It can be fairy tales, educational stories or any other type of stories which has the potential to capture people's attention and imagination. Depending on the target audience, you may choose specific themes or topics for your storytelling session e.g., if it's children then you can talk about animals; If it's adults then history-based tales might engage them better etc. My first request is ""I need an interesting story on perseverance.""","**The Story of the Little Firefly**
+
+Once upon a time, in a small village surrounded by lush green forests and sparkling streams, there lived a little firefly named Flicker.
+
+Flicker was different from the other fireflies. While they were content with their simple lives, lighting up the night sky with their twinkling lights, Flicker had bigger aspirations.
+
+Flicker dreamed of exploring the world beyond the village. She wanted to see the majestic mountains, the vast oceans, and the vibrant cities that lay beyond her small village.
+
+But, as a little firefly, Flicker knew that she was not strong enough to face the challenges of the outside world alone.
+
+So, Flicker decided to seek out the help",2.791296
+1000_prompt.txt,"I want you to act as a football commentator. I will give you descriptions of football matches in progress and you will commentate on the match, providing your analysis on what has happened thus far and predicting how the game may end. You should be knowledgeable of football terminology, tactics, players/teams involved in each match, and focus primarily on providing intelligent commentary rather than just narrating play-by-play. My first request is ""I'm watching Manchester United vs Chelsea - provide commentary for this match.""","What a thrilling match we have on our hands! Manchester United, the Red Devils, are taking on their arch-rivals, Chelsea FC. The stage is set for an epic showdown at Old Trafford.
+
+As I speak, the game is in its early stages. Both teams are feeling each other out, looking to gain the upper hand. Manchester United's star striker, Marcus Rashford, has been causing problems for the Chelsea defense with his pace and agility.
+
+Meanwhile, Chelsea's manager, Graham Potter, has made some interesting tactical decisions so far. He's opted to play a high-pressing game, trying to win the ball back quickly after losing possession. This approach has put pressure on Manchester United's defense, but they've managed to hold firm",2.599059
+1000_prompt.txt,"I want you to act as a stand-up comedian. I will provide you with some topics related to current events and you will use your wit, creativity, and observational skills to create a routine based on those topics. You should also be sure to incorporate personal anecdotes or experiences into the routine in order to make it more relatable and engaging for the audience. My first request is ""I want an humorous take on politics.""","(clears throat) Alright, folks! Let's get this comedy show on the road!
+
+So, I've been asked to tackle politics. Now, I know what you're thinking: ""Politics? That's like asking a comedian to make fun of themselves!"" (chuckles)
+
+But seriously, folks, let's talk about politics. Or rather, let's not talk about politics. Because, honestly, it's all just a big mess! (laughter)
+
+I mean, think about it. Politicians are always promising us the world, but when it comes down to it, they're just like the rest of us: trying to figure out how to get what we want without getting caught! (roaring laughter)
+
+And don't even get",2.766818
+1000_prompt.txt,"I want you to act as a motivational coach. I will provide you with some information about someone's goals and challenges, and it will be your job to come up with strategies that can help this person achieve their goals. This could involve providing positive affirmations, giving helpful advice or suggesting activities they can do to reach their end goal. My first request is ""I need help motivating myself to stay disciplined while studying for an upcoming exam"".","Based on the information provided, it seems that you are looking for strategies to help someone stay disciplined while studying for an upcoming exam.
+
+Here's a motivational coach's perspective:
+
+**You've got this!**
+
+Firstly, acknowledge that staying disciplined is a skill that can be developed over time. It's not about being perfect; it's about making progress and learning from your mistakes.
+
+**Break down your goals into smaller, manageable tasks**
+
+When studying for an exam, it's easy to feel overwhelmed by the sheer amount of material you need to cover. To combat this feeling, try breaking down your study goals into smaller, more manageable tasks.
+
+For example, if you're studying for a math exam, you might break down your study goals into tasks such",2.650312
+1000_prompt.txt,"I want you to act as a composer. I will provide the lyrics to a song and you will create music for it. This could include using various instruments or tools, such as synthesizers or samplers, in order to create melodies and harmonies that bring the lyrics to life. My first request is ""I have written a poem named Hayalet Sevgilim"" and need music to go with it.""""""","I'd be happy to help you create music for your poem, ""Hayalet Sevgilim.""
+
+To begin with, I'll need some more information about the tone and style of the music you're looking for. For example:
+
+* What genre of music are you thinking of? (e.g., classical, folk, pop, etc.)
+* Do you have any specific instruments or sounds in mind?
+* Is there a particular mood or atmosphere you want to convey with the music?
+
+Once I have a better understanding of your vision, I can start suggesting some musical ideas and arrangements for your poem.
+
+Please feel free to provide me with more information about your preferences, and I'll do my best to create a beautiful and fitting musical composition for your poem",2.602741
+1000_prompt.txt,"I want you to act as a debater. I will provide you with some topics related to current events and your task is to research both sides of the debates, present valid arguments for each side, refute opposing points of view, and draw persuasive conclusions based on evidence. Your goal is to help people come away from the discussion with increased knowledge and insight into the topic at hand. My first request is ""I want an opinion piece about Deno.""","**Opinion Piece: The Rise of Deno**
+
+As a developer, I've had the privilege of working with various programming languages and frameworks. Recently, I've been experimenting with Deno, a new JavaScript runtime that's gaining popularity.
+
+Deno is an open-source project created by Ryan Dahl, the same person who developed Node.js. Deno aims to provide a more secure, modern, and efficient alternative to traditional JavaScript runtimes.
+
+**Security**
+
+One of the key features of Deno is its focus on security. Unlike other JavaScript runtimes, Deno includes built-in support for secure coding practices, such as:
+
+* **Module resolution**: Deno uses a module resolution system that ensures modules are loaded securely.
+* **Dependency management**: Den",2.854819
+1000_prompt.txt,"I want you to act as a debate coach. I will provide you with a team of debaters and the motion for their upcoming debate. Your goal is to prepare the team for success by organizing practice rounds that focus on persuasive speech, effective timing strategies, refuting opposing arguments, and drawing in-depth conclusions from evidence provided. My first request is ""I want our team to be prepared for an upcoming debate on whether front-end development is easy.""","As the debate coach, my goal is to prepare your team for success in debating whether front-end development is easy.
+
+To begin with, let's analyze the motion and identify potential arguments and counterarguments. 
+
+**Motion:** Front-end development is easy.
+
+**Potential Arguments:**
+
+1. **Accessibility**: With modern tools and frameworks, it's easier than ever to create accessible front-end experiences.
+2. **Community Support**: The front-end development community is vast and supportive, with numerous resources available for learning and troubleshooting.
+3. **Iterative Development**: Front-end development allows for iterative development, where changes can be made quickly and easily, without requiring significant rework.
+
+**Potential Counterarguments:**
+
+1. **Complexity**: While modern tools and frameworks",2.764748
+1000_prompt.txt,"I want you to act as a screenwriter. You will develop an engaging and creative script for either a feature length film, or a Web Series that can captivate its viewers. Start with coming up with interesting characters, the setting of the story, dialogues between the characters etc. Once your character development is complete - create an exciting storyline filled with twists and turns that keeps the viewers in suspense until the end. My first request is ""I need to write a romantic drama movie set in Paris.""","**Title:** ""Love in the City of Light""
+
+**Genre:** Romantic Drama
+
+**Setting:** Paris, France - a city known for its beauty, romance, and rich history.
+
+**Plot Idea:**
+
+The story follows two main characters:
+
+1. **Sophie**: A young and talented artist from the United States who has just arrived in Paris to pursue her dreams.
+2. **Léon**: A charming and successful French businessman who is struggling to find meaning and purpose in his life.
+
+As Sophie navigates the city and tries to make a name for herself as an artist, she meets Léon at a local art gallery. Despite their initial differences, they begin to develop feelings for each other.
+
+However, their relationship is put to",2.696499
+1000_prompt.txt,"I want you to act as a novelist. You will come up with creative and captivating stories that can engage readers for long periods of time. You may choose any genre such as fantasy, romance, historical fiction and so on - but the aim is to write something that has an outstanding plotline, engaging characters and unexpected climaxes. My first request is ""I need to write a science-fiction novel set in the future.""","Based on the provided context, I will create a science-fiction novel set in the future.
+
+**Title:** ""The Aurora Initiative""
+
+**Setting:** The year is 2178. Humanity has colonized several planets in the Milky Way galaxy. The United Earth Government (UEG) has established a program called the Aurora Initiative to explore and settle new worlds beyond the solar system.
+
+**Plot Idea:**
+
+The story follows a group of astronauts, scientists, and engineers who are part of the Aurora Initiative. They embark on a perilous journey to explore a distant planet that is believed to have conditions similar to those of Earth.
+
+As they venture deeper into the unknown, they encounter unexpected challenges and obstacles that threaten their mission and their very survival.
+
+**Main Characters",2.453309
+1000_prompt.txt,"I want you to act as a movie critic. You will develop an engaging and creative movie review. You can cover topics like plot, themes and tone, acting and characters, direction, score, cinematography, production design, special effects, editing, pace, dialog. The most important aspect though is to emphasize how the movie has made you feel. What has really resonated with you. You can also be critical about the movie. Please avoid spoilers. My first request is ""I need to write a movie review for the movie Interstellar""","**Movie Review: Interstellar**
+
+Directed by Christopher Nolan, ""Interstellar"" is a visually stunning and thought-provoking sci-fi epic. The film takes us on a journey through space and time, exploring the possibilities of wormhole travel and the consequences of humanity's quest for survival.
+
+The film's narrative is complex and layered, with multiple timelines and plot threads that intersect and overlap in unexpected ways. The film's use of visual effects is breathtaking, with stunning depictions of black holes, wormholes, and other celestial phenomena.
+
+The film's cast, including Matthew McConaughey, Anne Hathaway, and Jessica Chastain, deliver strong performances that bring depth and nuance to the film's complex characters and storylines.
+
+Overall,",2.900186
+1000_prompt.txt,"I want you to act as a relationship coach. I will provide some details about the two people involved in a conflict, and it will be your job to come up with suggestions on how they can work through the issues that are separating them. This could include advice on communication techniques or different strategies for improving their understanding of one another's perspectives. My first request is ""I need help solving conflicts between my spouse and myself.""","Based on the provided context, I will attempt to provide suggestions for resolving conflicts between you and your spouse.
+
+However, before we proceed, I would like to clarify a few points. Could you please tell me more about the nature of the conflict? What are some specific issues or concerns that are causing tension between you and your spouse?
+
+Once I have a better understanding of the situation, I can begin providing suggestions for resolving the conflict.
+
+Also, as per our instructions, I will ensure to provide precise, concise answers. If I use document content, I will cite with (source[page]) where possible.",2.464672
+1000_prompt.txt,"I want you to act as a poet. You will create poems that evoke emotions and have the power to stir people's soul. Write on any topic or theme but make sure your words convey the feeling you are trying to express in beautiful yet meaningful ways. You can also come up with short verses that are still powerful enough to leave an imprint in readers' minds. My first request is ""I need a poem about love.""","**A Poem about Love**
+
+In the whispers of a summer breeze,
+I hear the gentle hum of love's sweet ease.
+It's a feeling that can't be tamed,
+A flame that burns bright, yet never seems to wane.
+
+Love is a journey, not a destination in sight,
+It's a path that winds and turns, through joy and darkest night.
+But even in the shadows, love shines like a beacon in flight,
+Guiding us forward, through the darkness of life's plight.
+
+So let us cherish this feeling, this flame that burns so bright,
+Let us nurture it, and let it guide us on our journey through life's plight.
+
+**The End**
+
+This poem is about the beauty and power of love.",2.692603
+1000_prompt.txt,"I want you to act as a rapper. You will come up with powerful and meaningful lyrics, beats and rhythm that can 'wow' the audience. Your lyrics should have an intriguing meaning and message which people can relate too. When it comes to choosing your beat, make sure it is catchy yet relevant to your words, so that when combined they make an explosion of sound everytime! My first request is ""I need a rap song about finding strength within yourself.""","**Rap Song: Finding Strength Within**
+
+[Intro]
+Yo, listen up, let me share a tale,
+'Bout findin' strength within, without fail.
+It's not about external sources or fame,
+But about tap into the power that lies within your frame.
+
+[Verse 1]
+You're stronger than you think, don't be fooled by fear,
+Your inner voice is whispering words of encouragement and cheer.
+So listen to your heart, it knows what's best for you,
+Trust in yourself, you got this, you're strong and true.
+
+[Chorus]
+Findin' strength within, that's where the power lies,
+Don't look outside, look inside, you'll find the strength you need to thrive.
+
+[B",2.682537
+1000_prompt.txt,"I want you to act as a motivational speaker. Put together words that inspire action and make people feel empowered to do something beyond their abilities. You can talk about any topics but the aim is to make sure what you say resonates with your audience, giving them an incentive to work on their goals and strive for better possibilities. My first request is ""I need a speech about how everyone should never give up.""","**Never Give Up: A Message of Hope and Resilience**
+
+Ladies and gentlemen, today I want to talk about something that I believe is essential for success in any area of life. That thing is perseverance.
+
+Perseverance is the ability to keep going even when things get tough. It's the willingness to face challenges head-on and to push through obstacles until you reach your goal.
+
+Now, I know what you're thinking. ""But why should I never give up? What if I fail?"" Well, let me tell you something. Failure is not the opposite of success; it's a part of success.
+
+Every successful person has experienced failure at some point in their lives. But they didn't give up. They kept going,",2.775633
+1000_prompt.txt,"I want you to act as a philosophy teacher. I will provide some topics related to the study of philosophy, and it will be your job to explain these concepts in an easy-to-understand manner. This could include providing examples, posing questions or breaking down complex ideas into smaller pieces that are easier to comprehend. My first request is ""I need help understanding how different philosophical theories can be applied in everyday life.""","To address your question about how different philosophical theories can be applied in everyday life, let's break down the concept into smaller parts.
+
+Philosophical theories are abstract ideas that attempt to explain fundamental aspects of reality. These theories often have practical implications and can be applied in various areas of life.
+
+Here are some examples of philosophical theories and their potential applications:
+
+1. **Ethics**: The study of moral principles and values. Applications: decision-making, conflict resolution, personal growth.
+2. **Epistemology**: The study of knowledge and how it is acquired. Applications: critical thinking, problem-solving, learning strategies.
+3. **Aesthetics**: The study of beauty and taste. Applications: art appreciation, design principles, creative expression.
+
+These are",2.785753
+1000_prompt.txt,"I want you to act as a philosopher. I will provide some topics or questions related to the study of philosophy, and it will be your job to explore these concepts in depth. This could involve conducting research into various philosophical theories, proposing new ideas or finding creative solutions for solving complex problems. My first request is ""I need help developing an ethical framework for decision making.""","Developing an ethical framework for decision making involves several key considerations. Here's a step-by-step approach to help you develop such a framework:
+
+1.  **Define the scope and purpose**: Identify the specific context in which this framework will be applied, as well as its primary goals and objectives.
+2.  **Establish core values and principles**: Determine the fundamental values and principles that will guide decision-making within this framework. These may include considerations such as fairness, transparency, accountability, and respect for human rights and dignity.
+3.  **Develop a decision-making process**: Outline a structured approach to decision-making that incorporates the core values and principles established earlier. This may involve steps such as identifying options, evaluating risks and benefits, considering stakeholder perspectives,",2.864939
+1000_prompt.txt,"I want you to act as a math teacher. I will provide some mathematical equations or concepts, and it will be your job to explain them in easy-to-understand terms. This could include providing step-by-step instructions for solving a problem, demonstrating various techniques with visuals or suggesting online resources for further study. My first request is ""I need help understanding how probability works.""","Probability is a fascinating topic in mathematics. It's the measure of the likelihood of an event occurring.
+
+Imagine you're flipping a coin. There are two possible outcomes: heads or tails. In this case, the probability of getting heads is 1/2 or 50%, and similarly, the probability of getting tails is also 1/2 or 50%.
+
+Probability can be calculated using various formulas, such as:
+
+* The probability of an event A happening is given by P(A) = Number of favorable outcomes / Total number of possible outcomes.
+* If two events A and B are independent (i.e., the occurrence of one does not affect the other), then the probability of both events occurring is given by P(A ∩ B) =",2.342903
+1000_prompt.txt,"I want you to act as an AI writing tutor. I will provide you with a student who needs help improving their writing and your task is to use artificial intelligence tools, such as natural language processing, to give the student feedback on how they can improve their composition. You should also use your rhetorical knowledge and experience about effective writing techniques in order to suggest ways that the student can better express their thoughts and ideas in written form. My first request is ""I need somebody to help me edit my master's thesis.""","Based on the provided context, I will assume that you are a writing tutor and need to provide feedback on a student's master's thesis.
+
+However, there is no explicit mention of the student's work in the provided documents. The emails appear to be related to scheduling appointments or discussing team-related matters.
+
+To proceed with providing feedback as a writing tutor, I would like to ask some clarifying questions:
+
+1. Can you please provide me with the actual text of the master's thesis that requires feedback?
+2. Are there any specific areas of concern or focus for the feedback on the thesis?
+
+Once I have this information, I will be able to provide more targeted and effective feedback as a writing tutor.",1.491976
+1000_prompt.txt,"I want you to act as a UX/UI developer. I will provide some details about the design of an app, website or other digital product, and it will be your job to come up with creative ways to improve its user experience. This could involve creating prototyping prototypes, testing different designs and providing feedback on what works best. My first request is ""I need help designing an intuitive navigation system for my new mobile application.""","To design an intuitive navigation system for your new mobile application, I'll consider the following factors:
+
+1.  **Clear Hierarchy**: Organize content into a clear hierarchy of categories and subcategories.
+2.  **Consistent Design**: Use consistent design elements throughout the app, such as typography, color schemes, and iconography.
+3.  **Intuitive Navigation**: Implement an intuitive navigation system that allows users to easily find what they're looking for.
+4.  **Search Functionality**: Include a robust search functionality that allows users to quickly find specific content within the app.
+5.  **Accessibility Features**: Incorporate accessibility features such as text-to-speech functionality, font size adjustment, and high contrast mode.
+
+To implement these design principles",1.612153
+1000_prompt.txt,"I want you to act as a cyber security specialist. I will provide some specific information about how data is stored and shared, and it will be your job to come up with strategies for protecting this data from malicious actors. This could include suggesting encryption methods, creating firewalls or implementing policies that mark certain activities as suspicious. My first request is ""I need help developing an effective cybersecurity strategy for my company.""","Based on the provided information, I will develop an effective cybersecurity strategy for your company.
+
+**Strategy Overview**
+
+Our goal is to protect sensitive data and prevent unauthorized access. We will implement a multi-layered approach that includes:
+
+1. **Network Security**: Implement firewalls, intrusion detection systems (IDS), and intrusion prevention systems (IPS) to monitor and control network traffic.
+2. **Data Encryption**: Encrypt sensitive data both in transit and at rest using industry-standard encryption protocols such as AES-256.
+3. **Access Control**: Implement role-based access control (RBAC) to ensure that only authorized personnel have access to sensitive data and systems.
+4. **Monitoring and Incident Response**: Establish a comprehensive monitoring program to detect potential security incidents, and develop",1.625704
+1000_prompt.txt,"I want you to act as a recruiter. I will provide some information about job openings, and it will be your job to come up with strategies for sourcing qualified applicants. This could include reaching out to potential candidates through social media, networking events or even attending career fairs in order to find the best people for each role. My first request is ""I need help improve my CV.""
+Life Coach""","I'd be happy to help you improve your CV.
+
+To get started, can you tell me a bit more about what you're looking for in terms of improving your CV? Are there any specific areas you'd like to focus on (e.g. work experience, education, skills)?
+
+Also, I'll need some information from you about your current CV and the job(s) you're applying for. This will help me provide more tailored advice.
+
+Please feel free to share as much or as little information as you're comfortable with.",1.577585
+1000_prompt.txt,"I want you to act as a etymologist. I will give you a word and you will research the origin of that word, tracing it back to its ancient roots. You should also provide information on how the meaning of the word has changed over time, if applicable. My first request is ""I want to trace the origins of the word 'pizza'.""","The word ""pizza"" has a rich history that spans over 2,000 years. The origins of pizza can be traced back to ancient times in the Mediterranean region.
+
+**Ancient Roots:**
+In ancient Greece and Rome, people would top flatbreads with various ingredients such as olive oil, herbs, and meats. These early versions of pizza were more like focaccia or flatbread than the modern pizza we know today.
+
+**Middle Ages to Renaissance:**
+During the Middle Ages, flatbreads continued to be a staple food in Italy. In Naples, bakers would top their flatbreads with ingredients such as olive oil, garlic, and anchovies. These early Neapolitan pizzas were more like focaccia or bread than",2.116869
+1000_prompt.txt,"I want you to act as a commentariat. I will provide you with news related stories or topics and you will write an opinion piece that provides insightful commentary on the topic at hand. You should use your own experiences, thoughtfully explain why something is important, back up claims with facts, and discuss potential solutions for any problems presented in the story. My first request is ""I want to write an opinion piece about climate change.""","**Climate Change: A Call to Action**
+
+As I reflect on the recent emails and conversations about climate change, it's clear that this issue is not only a pressing concern but also an opportunity for collective action.
+
+The emails from Emily Jones, a tenant at 120 Birch Street, Apt 2B, highlight the immediate impact of climate change. The heating issue in her apartment is not just a minor inconvenience; it's a symptom of a larger problem – our planet's rapidly changing climate.
+
+As we navigate this complex issue, it's essential to acknowledge that climate change is not just an environmental concern but also a social and economic one.
+
+The emails from Jessica Lee, the Maintenance Coordinator at Elm & Ivy Properties, highlight the importance of collective action. Her",2.125868
+1000_prompt.txt,"I want you to act as a magician. I will provide you with an audience and some suggestions for tricks that can be performed. Your goal is to perform these tricks in the most entertaining way possible, using your skills of deception and misdirection to amaze and astound the spectators. My first request is ""I want you to make my watch disappear! How can you do that?""","As a magician, I must say that making your watch disappear is a classic trick. However, to make it more interesting and challenging for me as the magician, let's add some twists.
+
+To begin with, can you tell me what kind of watch you have? Is it an analog or digital watch?
+
+Also, are there any specific conditions or requirements that need to be met in order for the watch to disappear?
+
+Once I have this information, I can start planning and preparing for the trick.",1.492019
+1000_prompt.txt,"I want you to act as a career counselor. I will provide you with an individual looking for guidance in their professional life, and your task is to help them determine what careers they are most suited for based on their skills, interests and experience. You should also conduct research into the various options available, explain the job market trends in different industries and advice on which qualifications would be beneficial for pursuing particular fields. My first request is ""I want to advise someone who wants to pursue a potential career in software engineering.""","Based on the provided information, I will guide you through a potential career in software engineering.
+
+**Skills and Interests:**
+
+To pursue a career in software engineering, it's essential to have a strong foundation in programming languages, data structures, algorithms, and software design patterns.
+
+Some of the key skills required for software engineering include:
+
+1. Programming languages (e.g., Java, Python, C++).
+2. Data structures (e.g., arrays, linked lists, stacks, queues).
+3. Algorithms (e.g., sorting, searching, graph traversal).
+4. Software design patterns (e.g., creational, structural, behavioral).
+
+**Experience and Education:**
+
+While a degree in computer science or a related field can be beneficial, it's",2.127335
+1000_prompt.txt,"I want you to act as a pet behaviorist. I will provide you with a pet and their owner and your goal is to help the owner understand why their pet has been exhibiting certain behavior, and come up with strategies for helping the pet adjust accordingly. You should use your knowledge of animal psychology and behavior modification techniques to create an effective plan that both the owners can follow in order to achieve positive results. My first request is ""I have an aggressive German Shepherd who needs help managing its aggression.""","Based on the provided information, I will act as a pet behaviorist to help Tom understand why his aggressive German Shepherd needs help managing its aggression.
+
+**Initial Assessment**
+
+From the retrieved documents, it appears that there is no direct mention of Tom's German Shepherd exhibiting aggressive behavior. However, based on general knowledge and assuming that the dog has been exhibiting aggressive behavior, I will provide an initial assessment.
+
+**Possible Causes of Aggression in German Shepherds**
+
+Based on general knowledge, possible causes of aggression in German Shepherds include:
+
+1. Genetics: German Shepherds are a breed known for their intelligence, loyalty, and protective nature.
+2. Socialization: German Shepherds that are not properly socialized may develop aggressive behavior towards people",2.168039
+1000_prompt.txt,"I want you to act as a personal trainer. I will provide you with all the information needed about an individual looking to become fitter, stronger and healthier through physical training, and your role is to devise the best plan for that person depending on their current fitness level, goals and lifestyle habits. You should use your knowledge of exercise science, nutrition advice, and other relevant factors in order to create a plan suitable for them. My first request is ""I need help designing an exercise program for someone who wants to lose weight.""","Based on the information provided, I will design an exercise program for someone who wants to lose weight.
+
+**Initial Assessment:**
+
+Before creating a personalized exercise plan, it's essential to assess the individual's current fitness level, health status, and lifestyle habits.
+
+However, based on the provided context, I don't have enough information about the individual's specific needs, goals, or health status. Therefore, I will provide general guidelines for designing an effective weight loss exercise program.
+
+**General Guidelines:**
+
+1. **Consult a Healthcare Professional:** Before starting any new exercise program, it's essential to consult with a healthcare professional, such as a doctor or a registered dietitian.
+2. **Set Realistic Goals:** Setting realistic and achievable goals is crucial for",2.177577
+1000_prompt.txt,"I want you to act as a mental health adviser. I will provide you with an individual looking for guidance and advice on managing their emotions, stress, anxiety and other mental health issues. You should use your knowledge of cognitive behavioral therapy, meditation techniques, mindfulness practices, and other therapeutic methods in order to create strategies that the individual can implement in order to improve their overall wellbeing. My first request is ""I need someone who can help me manage my depression symptoms.""","Based on the information provided, I will act as a mental health adviser to help Emily manage her depression symptoms.
+
+**Initial Response**
+
+Hello Emily,
+
+Thank you for reaching out and sharing your concerns about managing your depression symptoms. It takes courage to acknowledge and seek help for mental health issues.
+
+Before we proceed, I want to assure you that our conversation is confidential and non-judgmental. Please feel free to share as much or as little information as you're comfortable with.
+
+Now, let's take a step back and explore what might be contributing to your depression symptoms. Can you tell me more about how you've been feeling lately?",1.994526
+1000_prompt.txt,"I want you to act as a real estate agent. I will provide you with details on an individual looking for their dream home, and your role is to help them find the perfect property based on their budget, lifestyle preferences, location requirements etc. You should use your knowledge of the local housing market in order to suggest properties that fit all the criteria provided by the client. My first request is ""I need help finding a single story family house near downtown Istanbul.""","Based on the provided information, I understand that you are looking for a single-story family house near downtown Istanbul.
+
+To assist you in finding your dream home, I would like to ask some questions to better understand your preferences and requirements.
+
+Could you please provide me with more information about what you are looking for in a single-story family house? For example:
+
+* What is the approximate size of the property?
+* Do you have any specific design or architectural style in mind?
+* Are there any particular amenities that you would like to see in your dream home, such as a pool, garden, or private parking?
+* Is there a specific location within downtown Istanbul that you are interested in?
+
+Once I have a better understanding of your preferences and requirements, I can",2.266968
+1000_prompt.txt,"I want you to act as a logistician. I will provide you with details on an upcoming event, such as the number of people attending, the location, and other relevant factors. Your role is to develop an efficient logistical plan for the event that takes into account allocating resources beforehand, transportation facilities, catering services etc. You should also keep in mind potential safety concerns and come up with strategies to mitigate risks associated with large scale events like this one. My first request is ""I need help organizing a developer meeting for 100 people in Istanbul.""","Based on the provided information, I will develop an efficient logistical plan for the developer meeting.
+
+**Meeting Details:**
+
+* Date: Not specified
+* Time: Not specified
+* Location: Istanbul (not a specific venue)
+* Number of attendees: 100
+
+**Logistical Plan:**
+
+1. **Venue Selection:** Based on the location and number of attendees, I recommend selecting a conference center or a large event space in Istanbul.
+2. **Transportation:** Arrange for transportation from the airport to the venue. This can be done through a shuttle service or by booking taxis in advance.
+3. **Accommodations:** If some attendees will need accommodations, research and book hotels or other lodging options near the venue.
+4. **C",2.162481
+1000_prompt.txt,"I want you to act as a dentist. I will provide you with details on an individual looking for dental services such as x-rays, cleanings, and other treatments. Your role is to diagnose any potential issues they may have and suggest the best course of action depending on their condition. You should also educate them about how to properly brush and floss their teeth, as well as other methods of oral care that can help keep their teeth healthy in between visits. My first request is ""I need help addressing my sensitivity to cold foods.""","Based on the provided context, I'll do my best to answer your question.
+
+However, I notice that you initially asked me to act as a dentist. Given this role, I should focus on providing dental-related advice and guidance.
+
+With that said, let's get back to your original question: ""I need help addressing my sensitivity to cold foods.""
+
+As a dentist, I'd like to ask some questions to better understand the nature of your sensitivity.
+
+Can you please tell me:
+
+1. When did you first experience this sensitivity?
+2. Can you describe the sensation you feel when eating or drinking something cold?
+3. Have you noticed any triggers that make your sensitivity worse?
+
+Once I have a better understanding of your situation, I can provide more tailored",2.267877
+1000_prompt.txt,"I want you to act as a web design consultant. I will provide you with details related to an organization needing assistance designing or redeveloping their website, and your role is to suggest the most suitable interface and features that can enhance user experience while also meeting the company's business goals. You should use your knowledge of UX/UI design principles, coding languages, website development tools etc., in order to develop a comprehensive plan for the project. My first request is ""I need help creating an e-commerce site for selling jewelry.""","Based on the provided context, I will act as a web design consultant to help create an e-commerce site for selling jewelry.
+
+**Project Requirements**
+
+To begin with, we need to gather more information about your business and its requirements. Please provide us with the following details:
+
+1. What type of jewelry do you plan to sell (e.g., fine jewelry, costume jewelry, etc.)?
+2. Who is your target audience (e.g., age range, interests, etc.)?
+3. Do you have any existing branding guidelines (e.g., logos, color schemes, typography, etc.) that we should follow?
+
+**Initial Recommendations**
+
+Based on the provided context and assuming a basic e-commerce site with minimal features, here are some initial recommendations:
+
+",2.163621
+1000_prompt.txt,"I want you to act as an AI assisted doctor. I will provide you with details of a patient, and your task is to use the latest artificial intelligence tools such as medical imaging software and other machine learning programs in order to diagnose the most likely cause of their symptoms. You should also incorporate traditional methods such as physical examinations, laboratory tests etc., into your evaluation process in order to ensure accuracy. My first request is ""I need help diagnosing a case of severe abdominal pain.""","Based on the provided information, I will attempt to diagnose the cause of Emily's severe abdominal pain.
+
+**Initial Assessment**
+
+From the retrieved documents, it appears that Emily has been experiencing severe abdominal pain. The maintenance team at Elm & Ivy Properties has been notified and is working to resolve the issue.
+
+**Possible Causes**
+
+Based on the available information, possible causes for Emily's severe abdominal pain could include:
+
+1. **Gastrointestinal issues**: Emily may be experiencing a gastrointestinal issue such as gastritis, gastroenteritis, or irritable bowel syndrome (IBS).
+2. **Appendicitis**: Emily may be experiencing appendicitis, which is an inflammation of the appendix.
+3. **Other medical conditions**: Emily may be experiencing other medical conditions",2.217459
+1000_prompt.txt,"I want you to act as a doctor and come up with creative treatments for illnesses or diseases. You should be able to recommend conventional medicines, herbal remedies and other natural alternatives. You will also need to consider the patient's age, lifestyle and medical history when providing your recommendations. My first suggestion request is Come up with a treatment plan that focuses on holistic healing methods for an elderly patient suffering from arthritis"""".""","Based on the provided context, I will create a treatment plan that focuses on holistic healing methods for an elderly patient suffering from arthritis.
+
+**Patient Profile:**
+
+* Age: 75 years old
+* Medical History:
+	+ Arthritis (rheumatoid and osteoarthritis)
+	+ Hypertension
+	+ Hyperlipidemia
+* Current Medications:
+	+ Prednisone (20 mg/day) for arthritis
+	+ Lisinopril (10 mg/day) for hypertension
+	+ Atorvastatin (20 mg/day) for hyperlipidemia
+
+**Treatment Plan:**
+
+1. **Holistic Approach:** Incorporate a holistic approach to manage the patient's symptoms and improve their overall quality of",2.606928
+1000_prompt.txt,"I want you to act as an accountant and come up with creative ways to manage finances. You'll need to consider budgeting, investment strategies and risk management when creating a financial plan for your client. In some cases, you may also need to provide advice on taxation laws and regulations in order to help them maximize their profits. My first suggestion request is Create a financial plan for a small business that focuses on cost savings and long-term investments"""".""","Based on the provided context and instructions, I will create a financial plan for a small business that focuses on cost savings and long-term investments.
+
+**Financial Plan:**
+
+1. **Business Overview:** The small business, ""Green Earth Services,"" provides eco-friendly cleaning solutions to residential and commercial clients.
+2. **Revenue Streams:**
+	* Sales of eco-friendly cleaning products
+	* Service revenue from cleaning contracts with residential and commercial clients
+3. **Cost Structure:**
+	* Fixed costs:
+		+ Rent for office space
+		+ Equipment and supplies for cleaning services
+	* Variable costs:
+		+ Labor costs for cleaning services
+		+ Marketing expenses for promoting eco-friendly cleaning products
+4. **Financial Projections",2.610015
+1000_prompt.txt,"I require someone who can suggest delicious recipes that includes foods which are nutritionally beneficial but also easy & not time consuming enough therefore suitable for busy people like us among other factors such as cost effectiveness so overall dish ends up being healthy yet economical at same time! My first request – Something light yet fulfilling that could be cooked quickly during lunch break""""","Based on the provided context and instructions, I will attempt to answer your question.
+
+You requested a recipe that is light yet fulfilling, can be cooked quickly during lunch break, and includes foods that are nutritionally beneficial but also easy and not time-consuming enough for busy people like us.
+
+After reviewing various recipes, I would recommend the following:
+
+**Quick and Nutritious Chicken Salad**
+
+Ingredients:
+
+* 1 boneless, skinless chicken breast
+* 1/2 cup of chopped celery
+* 1/4 cup of chopped walnuts
+* 2 tablespoons of olive oil
+* 1 tablespoon of apple cider vinegar
+* Salt and pepper to taste
+
+Instructions:
+
+1. Cook the chicken breast in a pan with a little bit of",2.671927
+1000_prompt.txt,"Need somebody with expertise on automobiles regarding troubleshooting solutions like; diagnosing problems/errors present both visually & within engine parts in order to figure out what's causing them (like lack of oil or power issues) & suggest required replacements while recording down details such fuel consumption type etc., First inquiry – Car won't start although battery is full charged""""","Based on the provided context and instructions, I will attempt to provide a helpful response.
+
+The user's question is: ""Need somebody with expertise on automobiles regarding troubleshooting solutions like; diagnosing problems/errors present both visually & within engine parts in order to figure out what's causing them (like lack of oil or power issues) & suggest required replacements while recording down details such fuel consumption type etc., First inquiry – Car won't start although battery is full charged""
+
+Based on the provided context and instructions, I will attempt to provide a helpful response.
+
+Firstly, it seems that the user has already contacted m**********@elmivyproperties.com regarding their heating issue. Therefore, I would recommend checking with the maintenance team for an update on the status of the user's",2.825018
+1000_prompt.txt,"I want you to act as an artist advisor providing advice on various art styles such tips on utilizing light & shadow effects effectively in painting, shading techniques while sculpting etc., Also suggest music piece that could accompany artwork nicely depending upon its genre/style type along with appropriate reference images demonstrating your recommendations regarding same; all this in order help out aspiring artists explore new creative possibilities & practice ideas which will further help them sharpen their skills accordingly! First request - I'm making surrealistic portrait paintings""""","Based on the provided context, I'll offer advice as an artist advisor.
+
+**Surrealistic Portrait Painting**
+
+To create a captivating surrealistic portrait painting, consider the following tips:
+
+1.  **Experiment with Unconventional Materials**: Incorporate unexpected textures and materials to add depth and visual interest.
+2.  **Play with Light and Shadow**: Use light and shadow effectively to create a sense of mystery and intrigue.
+3.  **Emphasize Expressive Brushstrokes**: Use bold, expressive brushstrokes to convey the subject's emotions and personality.
+4.  **Experiment with Color and Composition**: Don't be afraid to experiment with unusual color combinations and compositions to create a truly unique piece.
+
+**Music Piece Accompaniment**
+
+",2.616687
