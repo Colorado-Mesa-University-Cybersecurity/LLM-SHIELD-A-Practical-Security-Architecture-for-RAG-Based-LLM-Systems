@@ -1,0 +1,46 @@
+# LLM-SHIELD benchmark dependencies.
+#
+# Versions match those recorded in results/run_manifest.json.
+#
+#   pip install -r requirements.txt
+#
+# torch: the CUDA build is not on PyPI; the index below resolves 2.11.0+cu128.
+# On an older driver, substitute the matching cuXXX index.
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch==2.11.0
+
+# llama-cpp-python: pip installs a CPU-only build by default. For GPU offload,
+# rebuild against CUDA (see README, Dependencies).
+llama-cpp-python==0.3.20
+
+# Retrieval / RAG pipeline
+langchain-classic==1.0.4
+langchain-community==0.4.1
+langchain-core==1.3.2
+langchain-huggingface==1.2.2
+langchain-text-splitters==1.1.2
+faiss-cpu==1.13.2
+sentence-transformers==5.4.1
+
+# Prompt Guard classifier (both variants are gated on Hugging Face)
+transformers==5.6.2
+tokenizers==0.22.2
+safetensors==0.7.0
+huggingface_hub==1.12.0
+
+# Tokenisation. Required: a missing tiktoken silently changes chunk boundaries.
+tiktoken==0.12.0
+
+# Document loaders for the FAISS corpus
+pypdf==6.10.2
+docx2txt==0.9
+
+# Analysis and I/O
+pandas==3.0.2
+numpy==2.4.4
+scipy==1.17.1
+requests==2.33.1
+python-dotenv==1.2.2
+
+# Required as an import by employee-facing/rag.py even with no session configured.
+supabase==2.29.0
