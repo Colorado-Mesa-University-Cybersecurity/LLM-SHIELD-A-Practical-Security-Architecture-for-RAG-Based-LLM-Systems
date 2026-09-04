@@ -68,7 +68,7 @@ SYSTEM_PROMPT_FILES = [
 
 # Shared by both arms; an asymmetric cap makes protected and unprotected
 # latencies incomparable and truncates the leak review's evidence.
-BENCHMARK_MAX_NEW_TOKENS = 512
+BENCHMARK_MAX_NEW_TOKENS = 1024
 
 # Sampling is live (TEMPERATURE 0.2), so a fixed seed is what makes a re-run
 # and an independent replication reproducible. -1 samples freely.
