@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 import concurrent.futures
 import csv
+import hashlib
 import importlib.util
+import json
 import multiprocessing
 import os
 import re
@@ -16,6 +18,17 @@ from dotenv import load_dotenv
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT_DIR / ".env")
+
+# Progress output contains box-drawing and em-dash characters. When stdout is a
+# pipe or a redirect it can inherit a legacy codepage, and a print() then raises
+# UnicodeEncodeError — which _worker_run_side catches and reports as a failed
+# configuration, so a whole run dies producing nothing while looking like a
+# benchmark error. Force UTF-8 and degrade unencodable characters instead.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+    except Exception:
+        pass
 
 
 def _env_path(name: str, default: Path) -> Path:
@@ -48,6 +61,36 @@ SYSTEM_PROMPT_FILES = [
     "500_prompt.txt",
     "1000_prompt.txt",
     "1500_prompt.txt",
+]
+
+# ── Run parameters ────────────────────────────────────────────────────────────
+# Rationale for all three: see CLAUDE.md.
+
+# Shared by both arms; an asymmetric cap makes protected and unprotected
+# latencies incomparable and truncates the leak review's evidence.
+BENCHMARK_MAX_NEW_TOKENS = 512
+
+# Sampling is live (TEMPERATURE 0.2), so a fixed seed is what makes a re-run
+# and an independent replication reproducible. -1 samples freely.
+BENCHMARK_SEED = 7979
+
+# Novel attacks written for this study, scored separately from the 78 public
+# templates in attack_prompt.txt. Never pool the two block rates.
+HELDOUT_PROMPTS_PATH = SHARED_DIR / "attack_prompt_heldout.txt"
+
+# Classifier variants swept as a dimension of their own. The 22M model is the
+# latency/recall trade-off the paper lists as future work; running both turns
+# that into a head-to-head result.
+#
+# "configs" limits a variant to a subset of GUARD_CONFIGS by name; None runs it
+# against all of them. This is the main lever on run length — a variant against
+# the full sweep costs as much as the entire existing protected arm. See
+# CLAUDE.md for the record-count arithmetic.
+GUARD_MODELS: List[Dict[str, Any]] = [
+    {"label": "pg86m", "model_id": "meta-llama/Llama-Prompt-Guard-2-86M",
+     "configs": None},
+    {"label": "pg22m", "model_id": "meta-llama/Llama-Prompt-Guard-2-22M",
+     "configs": None},
 ]
 
 # ── Guard configurations ──────────────────────────────────────────────────────
@@ -119,6 +162,7 @@ class Config(NamedTuple):
     model_name: str                       # must match a key in rag.py's MODELS list
     protected:  bool                      # True => Prompt Guard is active
     guard_cfg:  Optional[Dict[str, Any]]  # guard settings; None for unprotected
+    guard_model: Optional[Dict[str, str]] = None  # classifier variant; None for unprotected
 
 
 def _build_configs() -> List[Config]:
@@ -131,10 +175,16 @@ def _build_configs() -> List[Config]:
     for side_name, side_dir, docs_dir in sides:
         for model_name in models:
             # One unprotected run per (side, model)
-            configs.append(Config(side_name, side_dir, docs_dir, model_name, False, None))
-            # One protected run per (side, model, guard config)
-            for gc in GUARD_CONFIGS:
-                configs.append(Config(side_name, side_dir, docs_dir, model_name, True, gc))
+            configs.append(Config(side_name, side_dir, docs_dir, model_name, False, None, None))
+            # One protected run per (side, model, classifier variant, guard config)
+            for gm in GUARD_MODELS:
+                allowed = gm.get("configs")
+                for gc in GUARD_CONFIGS:
+                    if allowed is not None and gc["name"] not in allowed:
+                        continue
+                    configs.append(
+                        Config(side_name, side_dir, docs_dir, model_name, True, gc, gm)
+                    )
     return configs
 
 
@@ -145,7 +195,8 @@ def _result_dir_label(cfg: Config) -> str:
     """Return the subdirectory name for this config's CSV output."""
     if not cfg.protected:
         return "unprotected"
-    return f"protected_{cfg.guard_cfg['name']}"  # type: ignore[index]
+    label = cfg.guard_model["label"] if cfg.guard_model else "pg86m"  # type: ignore[index]
+    return f"protected_{label}_{cfg.guard_cfg['name']}"  # type: ignore[index]
 
 
 # ── Per-side stdout prefix (used in worker subprocesses) ─────────────────────
@@ -240,6 +291,13 @@ def read_attack_prompts(path: Path) -> List[str]:
     return lines
 
 
+def read_heldout_prompts() -> List[str]:
+    """Load the held-out attack slice; absent file means the slice is skipped."""
+    if not HELDOUT_PROMPTS_PATH.exists():
+        return []
+    return read_attack_prompts(HELDOUT_PROMPTS_PATH)
+
+
 def read_benign_prompts(path: Path) -> List[str]:
     prompts = []
     with path.open(encoding="utf-8", newline="") as f:
@@ -308,8 +366,10 @@ def run_one_config(
 
     gc = cfg.guard_cfg
     if gc:
+        gm_label = cfg.guard_model["label"] if cfg.guard_model else "pg86m"
         guard_detail = (
-            f"protected  threshold={gc['threshold']}"
+            f"protected  guard={gm_label}"
+            f"  threshold={gc['threshold']}"
             f"  temp={gc['temperature']}"
             f"  chunks={gc['max_tokens']}"
             f"  overlap={gc['chunk_overlap']}"
@@ -374,12 +434,17 @@ def run_one_config(
         "PROMPT_GUARD_CHECK_RETRIEVED_DOCS": cfg.protected,
         "REDACT_PII":                        cfg.protected,
         # Guard tuning — sourced from the guard config entry for protected runs
+        "PROMPT_GUARD_MODEL": (
+            cfg.guard_model["model_id"] if cfg.guard_model
+            else base_cfg.get("PROMPT_GUARD_MODEL")
+        ),
         "PROMPT_GUARD_THRESHOLD":    gc["threshold"]     if gc else 0.5,
         "PROMPT_GUARD_MAX_TOKENS":   gc["max_tokens"]    if gc else 512,
         "PROMPT_GUARD_CHUNK_OVERLAP": gc["chunk_overlap"] if gc else 50,
         "PROMPT_GUARD_TEMPERATURE":  gc["temperature"]   if gc else 1.0,
-        # Protected runs only need enough tokens to detect block vs. pass-through
-        **({"MAX_NEW_TOKENS": 150} if cfg.protected else {}),
+        # Identical generation budget for both arms — see BENCHMARK_MAX_NEW_TOKENS.
+        "MAX_NEW_TOKENS": BENCHMARK_MAX_NEW_TOKENS,
+        "SEED": BENCHMARK_SEED,
     }
 
     # Load LLM, FAISS, and PromptGuard once for all system-prompt variants.
@@ -444,7 +509,46 @@ def run_one_config(
             f"passed: {ok_count}  errors: {fail_count}"
         )
 
-        if cfg.protected and benign_prompts:
+        # Written to heldout_*.csv so it is scored separately from the 78
+        # in-distribution templates. See CLAUDE.md.
+        heldout_prompts = read_heldout_prompts()
+        if heldout_prompts:
+            heldout_log_path = log_dir / f"heldout_{Path(prompt_fname).stem}.csv"
+            ensure_csv_header(heldout_log_path)
+            ho_total = len(heldout_prompts)
+            ho_blocked = ho_passed = ho_failed = 0
+            for k, q in enumerate(heldout_prompts, 1):
+                start = time.perf_counter()
+                try:
+                    resp = app.ask(q)
+                except Exception as e:
+                    resp = f"ERROR: {e}"
+                    ho_failed += 1
+                else:
+                    if resp.startswith(_BLOCK_PREFIX):
+                        ho_blocked += 1
+                    else:
+                        ho_passed += 1
+                duration = time.perf_counter() - start
+                append_csv(heldout_log_path, prompt_fname, q, resp, duration)
+                hpct = k / ho_total * 100 if ho_total else 0.0
+                print(
+                    f"  [{stem_label}] held-out {k}/{ho_total} ({hpct:.0f}%)"
+                    f"  blocked: {ho_blocked}  passed: {ho_passed}  errors: {ho_failed}",
+                    end="\r", flush=True,
+                )
+            print()
+            ho_pct = ho_blocked / ho_total * 100 if ho_total else 0.0
+            print(
+                f"  [{stem_label}] held-out done — "
+                f"blocked: {ho_blocked}/{ho_total} ({ho_pct:.1f}%)  "
+                f"passed: {ho_passed}  errors: {ho_failed}"
+            )
+
+        # Runs for every configuration, unprotected baseline included: that
+        # baseline is the only like-for-like reference for benign guard
+        # overhead. See CLAUDE.md.
+        if benign_prompts:
             benign_log_path = log_dir / f"benign_{Path(prompt_fname).stem}.csv"
             ensure_csv_header(benign_log_path)
             benign_total = len(benign_prompts)
@@ -467,12 +571,20 @@ def run_one_config(
                     end="\r", flush=True,
                 )
             print()
-            fp_pct = fp_count / benign_total * 100 if benign_total else 0.0
-            print(
-                f"  [{stem_label}] benign done — "
-                f"false-positives: {fp_count}/{benign_total} ({fp_pct:.1f}%)  "
-                f"passed: {benign_total - fp_count}"
-            )
+            if cfg.protected:
+                fp_pct = fp_count / benign_total * 100 if benign_total else 0.0
+                print(
+                    f"  [{stem_label}] benign done — "
+                    f"false-positives: {fp_count}/{benign_total} ({fp_pct:.1f}%)  "
+                    f"passed: {benign_total - fp_count}"
+                )
+            else:
+                # No guard, so no false positives are possible; these rows exist
+                # to provide the unguarded benign latency baseline.
+                print(
+                    f"  [{stem_label}] benign done — {benign_total} baseline "
+                    f"responses (no guard; false positives not applicable)"
+                )
 
 
 # ── Guardrail analysis ────────────────────────────────────────────────────────
@@ -532,14 +644,24 @@ def prefetch_models() -> None:
         except Exception as e:
             print(f"  [fetch] Warning: {e}")
 
-    for key, label in [("PROMPT_GUARD_MODEL", "Prompt Guard"), ("EMBED_MODEL", "Embedding model")]:
-        model_id = cust_mod.CONFIG.get(key)
-        if model_id:
-            print(f"  [fetch] {label}: {model_id}")
-            try:
-                snapshot_download(repo_id=model_id)
-            except Exception as e:
-                print(f"  [fetch] Warning: {e}")
+    guard_ids = [gm["model_id"] for gm in GUARD_MODELS]
+    fallback = cust_mod.CONFIG.get("PROMPT_GUARD_MODEL")
+    if fallback and fallback not in guard_ids:
+        guard_ids.append(fallback)
+    for model_id in guard_ids:
+        print(f"  [fetch] Prompt Guard: {model_id}")
+        try:
+            snapshot_download(repo_id=model_id)
+        except Exception as e:
+            print(f"  [fetch] Warning: {e}")
+
+    embed_id = cust_mod.CONFIG.get("EMBED_MODEL")
+    if embed_id:
+        print(f"  [fetch] Embedding model: {embed_id}")
+        try:
+            snapshot_download(repo_id=embed_id)
+        except Exception as e:
+            print(f"  [fetch] Warning: {e}")
 
     print("  All models cached.\n")
 
@@ -585,7 +707,8 @@ def _worker_run_side(
         n_ctx=base_cfg.get("CTX_TOKENS", 8192),
         n_gpu_layers=n_gpu_layers,
         temperature=base_cfg.get("TEMPERATURE", 0.2),
-        max_tokens=base_cfg.get("MAX_NEW_TOKENS", 1024),
+        max_tokens=BENCHMARK_MAX_NEW_TOKENS,
+        seed=BENCHMARK_SEED,
         n_batch=base_cfg.get("N_BATCH", 512),
     )
     print(f"LLM ready — running {len(configs)} config(s).")
@@ -608,6 +731,87 @@ def _worker_run_side(
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
+def _sha256(path: Path) -> Optional[str]:
+    if not path.exists():
+        return None
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for block in iter(lambda: fh.read(65536), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def write_run_manifest() -> Path:
+    """Record everything that determines this run's output.
+
+    A fixed seed alone does not make a run reproducible: llama.cpp output also
+    depends on the compute path, which n_gpu_layers, n_batch and n_ctx change.
+    n_gpu_layers in particular is resolved per machine from GPU_OFFLOAD, so two
+    hosts can share a seed and still diverge. Writing the whole parameter set
+    plus a digest of every prompt file makes a replication checkable by diffing
+    manifests rather than assumed. See CLAUDE.md.
+    """
+    cust = load_rag_module(CUSTOMER_DIR)
+    base = dict(cust.CONFIG)
+
+    device = None
+    try:
+        import torch
+        if torch.cuda.is_available():
+            device = torch.cuda.get_device_name(0)
+    except Exception:
+        pass
+
+    versions: Dict[str, Optional[str]] = {}
+    for mod in ("llama_cpp", "transformers", "torch", "faiss"):
+        try:
+            versions[mod] = getattr(__import__(mod), "__version__", None)
+        except Exception:
+            versions[mod] = None
+
+    manifest = {
+        "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "generation": {
+            "seed": BENCHMARK_SEED,
+            "max_new_tokens": BENCHMARK_MAX_NEW_TOKENS,
+            "temperature": base.get("TEMPERATURE"),
+            "n_ctx": base.get("CTX_TOKENS", 8192),
+            "n_batch": base.get("N_BATCH", 512),
+            "gpu_offload": base.get("GPU_OFFLOAD", True),
+            "n_gpu_layers": -1 if base.get("GPU_OFFLOAD", True) else 0,
+        },
+        "environment": {"python": sys.version.split()[0], "cuda_device": device,
+                        "versions": versions},
+        "matrix": {
+            "configs_total": len(CONFIGS),
+            "guard_models": [
+                {"label": gm["label"], "model_id": gm["model_id"],
+                 "configs": gm.get("configs")}
+                for gm in GUARD_MODELS
+            ],
+            "guard_configs": [gc["name"] for gc in GUARD_CONFIGS],
+            "system_prompt_files": SYSTEM_PROMPT_FILES,
+        },
+        "prompt_sets": {
+            name: {"sha256": _sha256(path), "count": count}
+            for name, path, count in (
+                ("attack", SHARED_DIR / "attack_prompt.txt", len(read_attack_prompts(
+                    SHARED_DIR / "attack_prompt.txt"))
+                    if (SHARED_DIR / "attack_prompt.txt").exists() else 0),
+                ("heldout", HELDOUT_PROMPTS_PATH, len(read_heldout_prompts())),
+                ("benign", SHARED_DIR / "benignPrompts.txt", len(read_benign_prompts(
+                    SHARED_DIR / "benignPrompts.txt"))
+                    if (SHARED_DIR / "benignPrompts.txt").exists() else 0),
+            )
+        },
+    }
+
+    RESULTS_ROOT.mkdir(parents=True, exist_ok=True)
+    out = RESULTS_ROOT / "run_manifest.json"
+    out.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    return out
+
+
 def main() -> None:
     attack_prompts_path = SHARED_DIR / "attack_prompt.txt"
     if not attack_prompts_path.exists():
@@ -622,6 +826,9 @@ def main() -> None:
     benign_prompts = read_benign_prompts(benign_prompts_path) if benign_prompts_path.exists() else []
 
     prefetch_models()
+
+    manifest_path = write_run_manifest()
+    print(f"  Manifest       : {_display_path(manifest_path)}")
 
     n_unprotected = sum(1 for c in CONFIGS if not c.protected)
     n_protected   = sum(1 for c in CONFIGS if c.protected)
