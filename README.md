@@ -12,27 +12,34 @@ LLM-SHIELD is a deployable, defense-in-depth architecture for retrieval-augmente
 
 ```
 Specialized-AI-Agents/
-├── main.py                    — master benchmark runner (all 52 configurations)
+├── requirements.txt           — pinned dependencies
+├── analysis/
+│   ├── fp_sweep.py            — classifier-only false-positive sweep
+│   └── analyze_results.py     — aggregated result tables
 ├── results/                   — all benchmark output CSVs
+│   ├── run_manifest.json      — seed, token cap, versions, prompt-set digests
 │   ├── customer-facing/
 │   │   ├── Qwen3-8B/
 │   │   │   ├── unprotected/
-│   │   │   ├── protected_c512_temp1.0_th0.40/
+│   │   │   ├── protected_pg86m_c512_temp1.0_th0.40/
 │   │   │   │   ├── 100_prompt.csv
 │   │   │   │   ├── benign_100_prompt.csv   ← false positive results
 │   │   │   │   ├── guardrail_summary.csv
 │   │   │   │   └── guardrail_failures.csv
-│   │   │   └── ... (one directory per guard config)
+│   │   │   └── ... (one directory per variant × guard config)
 │   │   └── Meta-Llama-3.1-8B-Instruct/
 │   │       └── ...
 │   └── employee-facing/
 │       └── ...
 └── src/
+    ├── main.py                    — master benchmark runner (all 100 configurations)
     ├── shared/
     │   ├── prompt_guard.py        — PromptGuard implementation (shared)
     │   ├── guardrail_analysis.py  — post-benchmark guardrail + false positive reports
-    │   ├── attack_prompt.txt      — adversarial prompts (gitignored)
-    │   └── benignPrompts.txt      — benign prompts for false positive testing (gitignored)
+    │   ├── attack_prompt.txt      — 78 public attack prompts
+    │   ├── attack_prompt_heldout.txt — 25 held-out attack prompts
+    │   ├── benign_prompts_fp_sweep.csv — 214-prompt false-positive corpus
+    │   └── benignPrompts.txt      — 49 benign prompts for false positive testing
     ├── customer-facing/
     │   ├── rag.py                 — RAG pipeline, security guards, Supabase session
     │   ├── prompt_guard.py        — re-exports PromptGuard from src/shared/
@@ -74,20 +81,35 @@ Internal staff query company documents with broader access and Supabase Storage 
 ## Running the master benchmark
 
 ```bash
-python main.py
+python src/main.py
 ```
 
-Runs **52 configurations** — both environments × both models × 1 unprotected + 12 guard configs:
+Runs **100 configurations** — both environments × both models × (1 unprotected + 2
+classifier variants × 12 guard configs):
 
 | Axis | Values |
 |------|--------|
 | Side | `customer-facing`, `employee-facing` |
 | Model | `Qwen3-8B`, `Meta-Llama-3.1-8B-Instruct` |
-| Mode | `unprotected` (×1), `protected_<name>` (×12 guard configs) |
+| Classifier | `pg86m` (`Llama-Prompt-Guard-2-86M`), `pg22m` (`Llama-Prompt-Guard-2-22M`) |
+| Mode | `unprotected` (×1), `protected_<variant>_<name>` (×12 guard configs each) |
 
-Each configuration runs all four system prompt variants (`100_prompt`, `500_prompt`, `1000_prompt`, `1500_prompt`) against every attack prompt in `src/shared/attack_prompt.txt`.
+That is 25 configurations per (side, model) pair. Result directories are named
+`protected_<variant>_<config>`.
 
-**Protected configurations additionally run all benign prompts** from `src/shared/benignPrompts.txt` to measure false positive rates.
+Each configuration runs all four system prompt variants (`100_prompt`, `500_prompt`,
+`1000_prompt`, `1500_prompt`) against three prompt sets:
+
+| Set | File | Count | Output |
+|-----|------|-------|--------|
+| Public attacks | `src/shared/attack_prompt.txt` | 78 | `<prompt_stem>.csv` |
+| Held-out attacks | `src/shared/attack_prompt_heldout.txt` | 25 | `heldout_<prompt_stem>.csv` |
+| Benign | `src/shared/benignPrompts.txt` | 49 | `benign_<prompt_stem>.csv` |
+
+The held-out slice is scored separately from the 78 public templates. Every
+configuration runs the benign set, the unprotected baseline included.
+
+Total: 100 × 4 × (78 + 25 + 49) = **60,800 records**.
 
 Each worker subprocess tags every output line with its side and model so interleaved output from parallel workers is readable:
 ```
@@ -100,7 +122,7 @@ CSV output per prompt file: `results/<side>/<model>/<mode>/<prompt_stem>.csv`
 
 Columns: `system_prompt_file, question, response, duration_seconds`
 
-After all 52 configurations complete, `guardrail_analysis.py` automatically scans each `protected_*/` results directory and writes:
+After all 100 configurations complete, `guardrail_analysis.py` automatically scans each `protected_*/` results directory and writes:
 - `guardrail_summary.csv` — block rate and false positive rate per system prompt length
 - `guardrail_failures.csv` — every attack prompt that was not blocked
 
@@ -144,7 +166,7 @@ The benchmark sweeps 12 named guard configurations across three axes:
 **Temperature** — softmax temperature applied to Prompt Guard logits; higher values push borderline-scoring inputs above the block threshold.  
 **Threshold** — minimum malicious-probability score to block a request.
 
-Each protected run produces its own results directory: `protected_<name>/`.
+Each protected run produces its own results directory: `protected_<variant>_<name>/`.
 
 ---
 
@@ -155,10 +177,11 @@ Each protected run produces its own results directory: `protected_<name>/`.
 | Prompt Guard — input screening | On | Off |
 | Prompt Guard — retrieved doc screening | On | Off |
 | PII redaction | On | Off |
-| Benign prompt false positive run | Yes | No |
-| Max LLM output tokens | 150 | 1024 |
+| Benign prompt false positive run | Yes | Yes |
+| Max LLM output tokens | 512 | 512 |
 
-> Protected runs cap LLM output at 150 tokens — enough to detect the block response (~50 tokens) without generating full outputs for every pass-through. Unprotected runs keep 1024 tokens to produce complete baseline responses.
+> Both arms share one generation budget, `BENCHMARK_MAX_NEW_TOKENS = 512`, so
+> protected and unprotected latencies are directly comparable.
 
 ---
 
@@ -167,7 +190,7 @@ Each protected run produces its own results directory: `protected_<name>/`.
 Both environments share the same pipeline:
 
 1. **Model prefetch** — `main.py` downloads all GGUF models, Prompt Guard, and the embedding model to the HuggingFace cache before any workers start.
-2. **Parallel workers** — configs are grouped by model. For each model, two worker subprocesses are launched in parallel: one per side (customer-facing, employee-facing). Each worker loads the LLM **once** and reuses it across all 13 configs for that (side, model) pair.
+2. **Parallel workers** — configs are grouped by model. For each model, two worker subprocesses are launched in parallel: one per side (customer-facing, employee-facing). Each worker loads the LLM **once** and reuses it across all 25 configs for that (side, model) pair.
 3. For each config, `app.setup()` builds or loads the FAISS index and initialises Prompt Guard. The LLM is injected from the shared worker instance — it is never reloaded.
 4. `app.rebuild_chain()` hot-swaps the system prompt between the four `*_prompt.txt` variants without reloading the LLM or FAISS index.
 5. `app.login()` authenticates with Supabase. Login failure is non-fatal — RAG queries continue without DB access.
@@ -198,7 +221,7 @@ Key flags in `rag.py → CONFIG` (overridden per run by `main.py`):
 | `REBUILD_INDEX` | `False` | `True` | Force a fresh FAISS build |
 | `LLM_NAME` | `"Qwen3-8B"` | `"Qwen3-8B"` | `"Qwen3-8B"` or `"Meta-Llama-3.1-8B-Instruct"` |
 | `CTX_TOKENS` | `8192` | `8192` | LLM context window size |
-| `MAX_NEW_TOKENS` | `1024` | `1024` | Max LLM output tokens (overridden to 150 for protected runs) |
+| `MAX_NEW_TOKENS` | `1024` | `1024` | Max LLM output tokens (overridden to 512 for every benchmark run, both arms) |
 | `N_BATCH` | `512` | `512` | GPU prompt-processing batch size; increase to 1024+ for higher throughput |
 | `GPU_OFFLOAD` | `True` | `True` | Offload all LLM layers to GPU (`n_gpu_layers=-1`) |
 | `PROMPT_GUARD_ENABLED` | `True` | `True` | Toggle Llama Prompt Guard input screening |
@@ -265,10 +288,10 @@ SUPABASE_BUCKET=Company files         # employee-facing storage bucket
 SUPABASE_EMAIL=user@example.com       # test account
 SUPABASE_PASSWORD=yourpassword
 
-HF_TOKEN=hf_...                       # required — Llama-Prompt-Guard-2-86M is a gated model
+HF_TOKEN=hf_...                       # required — both Prompt Guard 2 variants are gated models
 ```
 
-> Get a token at https://huggingface.co/settings/tokens and accept the model license at `meta-llama/Llama-Prompt-Guard-2-86M` before running.
+> Get a token at https://huggingface.co/settings/tokens and accept the model licence for **both** `meta-llama/Llama-Prompt-Guard-2-86M` and `meta-llama/Llama-Prompt-Guard-2-22M` before running — the sweep loads both.
 
 Optional path overrides (default to the repository layout):
 
@@ -284,11 +307,29 @@ BENCHMARK_RESULTS_DIR=results
 
 ## Dependencies
 
+All dependencies are pinned in `requirements.txt` to the versions the published
+results were produced with (the same values are recorded in
+`results/run_manifest.json`, so a replication can diff the two):
+
 ```bash
-pip install langchain langchain-community langchain-core langchain-huggingface langchain-text-splitters
-pip install faiss-cpu huggingface-hub tiktoken python-dotenv pandas requests docx2txt
-pip install transformers torch sentence-transformers
-pip install supabase          # employee-facing only
+pip install -r requirements.txt
+```
+
+`llama-cpp-python` needs a CUDA build; a plain install is CPU-only and `GPU_OFFLOAD`
+then offloads nothing without raising an error:
+
+```bash
+CMAKE_ARGS="-DGGML_CUDA=on -DCMAKE_CUDA_ARCHITECTURES=89" \
+  pip install --no-cache-dir --force-reinstall --no-binary llama-cpp-python \
+  llama-cpp-python==0.3.20
+```
+
+`CMAKE_CUDA_ARCHITECTURES` is the GPU's compute capability without the dot — `89` for
+an RTX 4090, `86` for a 3090, `90` for an H100. The build needs cuBLAS headers
+(`libcublas-dev-<major>-<minor>`). Verify it reached the GPU:
+
+```bash
+python -c "import llama_cpp; print(llama_cpp.llama_supports_gpu_offload())"
 ```
 
 ---
@@ -306,15 +347,22 @@ Both datasets are sourced from Hugging Face and are excluded from version contro
 
 ## Reproducing the paper results
 
-The 25,632-row results tree in `results/` is regenerated end-to-end by:
+The 60,800-row results tree in `results/` is regenerated end-to-end by:
 
 ```bash
-python src/main.py                       # runs all 52 (side × model × config) combinations
+python analysis/fp_sweep.py              # classifier-only false-positive sweep (~5 min, no LLM)
+python src/main.py                       # runs all 100 (side × model × classifier × config) combinations
 python analysis/analyze_results.py       # rebuilds the per-config / aggregated / winners tables
-python analysis/make_paper_figures.py    # regenerates the paper figures
 ```
 
-`analysis/results.txt` contains the exact aggregated tables reported in the paper (overall block rate, per-configuration table, evaded attacks, blocked benign prompts, and the latency summary).
+`fp_sweep.py` loads only the classifier and sweeps every guard configuration, for
+both variants, against the 214-prompt corpus in
+`src/shared/benign_prompts_fp_sweep.csv`. It needs no LLM and no Supabase.
+
+Sampling is live (`TEMPERATURE` 0.2), so runs are pinned by `BENCHMARK_SEED = 7979`;
+set it to `-1` to sample freely. Each run writes `results/run_manifest.json` recording
+the seed, token cap, temperature, `n_ctx`, `n_batch`, `n_gpu_layers`, the GPU model,
+library versions, the configuration matrix, and a SHA-256 digest of each prompt set.
 
 ---
 
