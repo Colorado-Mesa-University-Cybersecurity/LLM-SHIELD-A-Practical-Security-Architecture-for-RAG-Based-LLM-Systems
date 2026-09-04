@@ -204,6 +204,22 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
-/src/employee-facing/docs/attack_prompt.txt
-/src/shared/attack_prompt.txt
-/src/shared/benignPrompts.txt
+
+# ── Project-specific ─────────────────────────────────────────────────────────
+# JetBrains IDE settings (the template above leaves this commented out).
+.idea/
+
+# FAISS vector indexes: large, binary, and rebuilt from src/*/docs by
+# RAGApp.setup() whenever REBUILD_INDEX is set. Never hand-edited.
+.faiss_index/
+src/*/.faiss_index/
+
+# Local model cache, if a run is pointed at an in-repo cache instead of ~/.cache.
+models/
+*.gguf
+
+# Scratch/working artifacts that are not inputs or results.
+scratch/
+*.tmp
+*.bak
+~$*.docx
