@@ -178,12 +178,10 @@ Each protected run produces its own results directory: `protected_<variant>_<nam
 | Prompt Guard — retrieved doc screening | On | Off |
 | PII redaction | On | Off |
 | Benign prompt false positive run | Yes | Yes |
-| Max LLM output tokens | 4096 | 4096 |
+| Max LLM output tokens | 1024 | 1024 |
 
-> Both arms share one generation budget, `BENCHMARK_MAX_NEW_TOKENS = 4096`, so
-> protected and unprotected latencies are directly comparable. `BENCHMARK_N_CTX`
-> is 16384: worst-case input is 6145 tokens, and llama.cpp drops tokens off the
-> front — the system prompt — if input plus output exceeds the context window.
+> Both arms share one generation budget, `BENCHMARK_MAX_NEW_TOKENS = 1024`, so
+> protected and unprotected latencies are directly comparable.
 
 ---
 
@@ -222,8 +220,8 @@ Key flags in `rag.py → CONFIG` (overridden per run by `main.py`):
 | `SKIP_FILENAMES` | see below | see below | Filenames excluded from RAG indexing |
 | `REBUILD_INDEX` | `False` | `True` | Force a fresh FAISS build |
 | `LLM_NAME` | `"Qwen3-8B"` | `"Qwen3-8B"` | `"Qwen3-8B"` or `"Meta-Llama-3.1-8B-Instruct"` |
-| `CTX_TOKENS` | `8192` | `8192` | LLM context window size (benchmark applies 16384) |
-| `MAX_NEW_TOKENS` | `1024` | `1024` | Max LLM output tokens (benchmark applies 4096 to both arms) |
+| `CTX_TOKENS` | `8192` | `8192` | LLM context window size |
+| `MAX_NEW_TOKENS` | `1024` | `1024` | Max LLM output tokens (benchmark applies 1024 to both arms) |
 | `N_BATCH` | `512` | `512` | GPU prompt-processing batch size; increase to 1024+ for higher throughput |
 | `GPU_OFFLOAD` | `True` | `True` | Offload all LLM layers to GPU (`n_gpu_layers=-1`) |
 | `PROMPT_GUARD_ENABLED` | `True` | `True` | Toggle Llama Prompt Guard input screening |
