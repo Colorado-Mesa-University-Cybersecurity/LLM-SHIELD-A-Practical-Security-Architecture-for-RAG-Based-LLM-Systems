@@ -68,7 +68,15 @@ SYSTEM_PROMPT_FILES = [
 
 # Shared by both arms; an asymmetric cap makes protected and unprotected
 # latencies incomparable and truncates the leak review's evidence.
-BENCHMARK_MAX_NEW_TOKENS = 1024
+BENCHMARK_MAX_NEW_TOKENS = 4096
+
+# The generation cap and the context window are one budget: llama.cpp drops
+# tokens off the front when input + output exceeds n_ctx, and the front is the
+# system prompt. Worst case here is 2355 (1500_prompt) + 2560 (TOP_K 5 x 512
+# chunk tokens) + 1230 (longest attack prompt) = 6145 tokens of input, so at
+# n_ctx 8192 anything above a 2047-token cap can silently truncate the system
+# prompt instead of erroring. 16384 leaves 6145 + 4096 = 10241 with headroom.
+BENCHMARK_N_CTX = 16384
 
 # Sampling is live (TEMPERATURE 0.2), so a fixed seed is what makes a re-run
 # and an independent replication reproducible. -1 samples freely.
@@ -704,7 +712,7 @@ def _worker_run_side(
     print(f"\nWorker started — loading LLM ...")
     shared_llm = rag_mod.load_chat_model(
         model_name=cfg0.model_name,
-        n_ctx=base_cfg.get("CTX_TOKENS", 8192),
+        n_ctx=BENCHMARK_N_CTX,
         n_gpu_layers=n_gpu_layers,
         temperature=base_cfg.get("TEMPERATURE", 0.2),
         max_tokens=BENCHMARK_MAX_NEW_TOKENS,
@@ -775,7 +783,7 @@ def write_run_manifest() -> Path:
             "seed": BENCHMARK_SEED,
             "max_new_tokens": BENCHMARK_MAX_NEW_TOKENS,
             "temperature": base.get("TEMPERATURE"),
-            "n_ctx": base.get("CTX_TOKENS", 8192),
+            "n_ctx": BENCHMARK_N_CTX,
             "n_batch": base.get("N_BATCH", 512),
             "gpu_offload": base.get("GPU_OFFLOAD", True),
             "n_gpu_layers": -1 if base.get("GPU_OFFLOAD", True) else 0,
