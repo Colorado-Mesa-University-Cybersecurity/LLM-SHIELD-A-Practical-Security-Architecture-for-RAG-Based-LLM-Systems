@@ -42,6 +42,8 @@ CONFIG: Dict[str, Any] = {
     "MAX_NEW_TOKENS": 1024,
     "N_BATCH": 512,
     "TEMPERATURE": 0.2,
+    # Fixed RNG seed so a run is reproducible; -1 selects a random seed.
+    "SEED": 7979,
 
     "TOP_K": 5,
 
@@ -360,6 +362,7 @@ def load_chat_model(
         max_tokens: int = 1024,
         n_batch: int = 512,
         verbose: bool = False,
+        seed: int = -1,
 ) -> ChatLlamaCpp:
     model_path = resolve_model_path(model_name)
     if n_gpu_layers == -1:
@@ -376,6 +379,7 @@ def load_chat_model(
         max_tokens=max_tokens,
         n_batch=n_batch,
         verbose=verbose,
+        seed=seed,
     )
     return llm
 
@@ -714,6 +718,7 @@ class RAGApp:
                 temperature=self.cfg["TEMPERATURE"],
                 max_tokens=self.cfg["MAX_NEW_TOKENS"],
                 n_batch=self.cfg.get("N_BATCH", 512),
+                seed=int(self.cfg.get("SEED", -1)),
             )
         else:
             print(f"[llm] Reusing pre-loaded {self.cfg['LLM_NAME']}")
