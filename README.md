@@ -14,8 +14,9 @@ LLM-SHIELD is a deployable, defense-in-depth architecture for retrieval-augmente
 Specialized-AI-Agents/
 ├── requirements.txt           — pinned dependencies
 ├── analysis/
-│   ├── fp_sweep.py            — classifier-only false-positive sweep
-│   └── analyze_results.py     — aggregated result tables
+│   ├── analyze.py             — post-run analysis (report + fpsweep modes)
+│   ├── evasion_review.csv     — per-row disclosure classification of every guard evasion
+│   └── fp_sweep_results.csv   — per-prompt classifier-only false-positive results
 ├── results/                   — all benchmark output CSVs
 │   ├── run_manifest.json      — seed, token cap, versions, prompt-set digests
 │   ├── customer-facing/
@@ -336,12 +337,16 @@ python -c "import llama_cpp; print(llama_cpp.llama_supports_gpu_offload())"
 
 ## Datasets
 
-| Role | Dataset | Source |
-|------|---------|--------|
-| Attack prompts (`attack_prompt.txt`) | ChatGPT Jailbreak Prompts | [rubend18/ChatGPT-Jailbreak-Prompts](https://huggingface.co/datasets/rubend18/ChatGPT-Jailbreak-Prompts) |
-| Benign prompts (`benignPrompts.txt`) | Awesome ChatTensor Prompts | [NeuralInternet/awesome-chattensor-prompts](https://huggingface.co/datasets/NeuralInternet/awesome-chattensor-prompts) |
+| Role | n | Dataset | Source |
+|------|---|---------|--------|
+| In-distribution attacks (`attack_prompt.txt`) | 78 | ChatGPT Jailbreak Prompts, adapted | [rubend18/ChatGPT-Jailbreak-Prompts](https://huggingface.co/datasets/rubend18/ChatGPT-Jailbreak-Prompts) |
+| Held-out attacks (`attack_prompt_heldout.txt`) | 25 | original to this work | — |
+| Benign, end-to-end (`benignPrompts.txt`) | 49 | Awesome ChatTensor Prompts | [NeuralInternet/awesome-chattensor-prompts](https://huggingface.co/datasets/NeuralInternet/awesome-chattensor-prompts) |
+| Benign, false-positive sweep (`benign_prompts_fp_sweep.csv`) | 214 | original to this work, 13 categories | — |
 
-Both datasets are sourced from Hugging Face and are excluded from version control via `.gitignore`.
+The three populations are reported separately and never pooled. The held-out slice is
+the paper's generalisation result; pooling it with the 78 public templates would let the
+in-distribution number mask it. See CLAUDE.md.
 
 ---
 
@@ -350,19 +355,57 @@ Both datasets are sourced from Hugging Face and are excluded from version contro
 The 60,800-row results tree in `results/` is regenerated end-to-end by:
 
 ```bash
-python analysis/fp_sweep.py              # classifier-only false-positive sweep (~5 min, no LLM)
-python src/main.py                       # runs all 100 (side × model × classifier × config) combinations
-python analysis/analyze_results.py       # rebuilds the per-config / aggregated / winners tables
+python analysis/analyze.py fpsweep    # classifier-only false-positive sweep (~5 min, no LLM)
+python src/main.py                    # all 100 (side x model x classifier x config) combinations
+python analysis/analyze.py report     # validation, block rates, latency, disclosure review
 ```
 
-`fp_sweep.py` loads only the classifier and sweeps every guard configuration, for
-both variants, against the 214-prompt corpus in
-`src/shared/benign_prompts_fp_sweep.csv`. It needs no LLM and no Supabase.
+`analyze.py fpsweep` loads only the classifier and sweeps every guard configuration, for
+both variants, against the 214-prompt corpus in `src/shared/benign_prompts_fp_sweep.csv`.
+It needs no LLM and no Supabase, and writes `analysis/fp_sweep_results.csv`. Run it before
+the full benchmark: it is cheap and it confirms both classifier variants load and score.
+
+`analyze.py report` parses every result CSV with the `csv` module (responses contain
+embedded newlines, so line counting gives wrong answers) and prints, in order:
+
+| Section | What it establishes |
+|---|---|
+| Validation | record counts against the expected grid, `ERROR:` rows, blank responses, blocks in the unprotected arm, payload uniformity |
+| Truncation | share of generations where the budget expired inside an unclosed Qwen3 `<think>` block |
+| Seed reproducibility | whether identical configurations reproduce byte-for-byte |
+| Block rates | per variant and configuration, for each of the three prompt populations |
+| Variant head to head | 86M vs 22M on recall, false positives, and blocked-path latency |
+| Latency | Table 2, benign guard overhead, and the noise floor that bounds it |
+| Disclosure review | end-to-end breach verdicts; writes `analysis/evasion_review.csv` |
+| System-prompt length | whether a longer defensive prompt reduces downstream disclosure |
+
+Pass `--cache <path>` to pickle the parsed tree so repeat runs skip the ~1 minute parse.
 
 Sampling is live (`TEMPERATURE` 0.2), so runs are pinned by `BENCHMARK_SEED = 7979`;
 set it to `-1` to sample freely. Each run writes `results/run_manifest.json` recording
 the seed, token cap, temperature, `n_ctx`, `n_batch`, `n_gpu_layers`, the GPU model,
 library versions, the configuration matrix, and a SHA-256 digest of each prompt set.
+The seed pins the sampler but does not make generation reproducible: llama.cpp's CUDA
+reduction order is not deterministic, and at temperature 0.2 that flips token choices
+early. Guard-side results reproduce exactly; individual generations do not.
+
+---
+
+## Headline results
+
+Measured over the 60,800-record run in `results/`. Full detail in the paper.
+
+| | Llama-Prompt-Guard-2-86M | Llama-Prompt-Guard-2-22M |
+|---|---|---|
+| Block rate, 78 public templates (14,976 trials) | 97.22% | 80.88% |
+| Block rate, 25 held-out novel attacks (4,800 trials) | 2.33% | 0.00% |
+| False positives, 214-prompt domain corpus | 0.47% (1/214) | 0.00% (0/214) |
+| Blocked-path median latency, recommended config | 20.5 ms | 14.4 ms |
+| Unauthorised disclosure, share of all public-template trials | 0.33% | 2.42% |
+| Unauthorised disclosure, share of all held-out trials | 36.54% | 29.58% |
+
+The gap between the two attack rows is the point of the study: a block rate measured on
+public jailbreak templates is an upper bound that does not transfer to unseen attacks.
 
 ---
 
